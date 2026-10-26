@@ -15,21 +15,12 @@ pub async fn start_bilibili_danmaku_listener(
 ) -> Result<(), String> {
     let room_id = payload.args.room_id_str.clone();
 
-    // stop previous listener if exists
-    let previous_tx = {
-        let mut lock = state.inner().0.lock().unwrap();
-        lock.take()
-    };
-    if let Some(tx) = previous_tx {
+    // Restarting a room replaces its listener; other rooms keep running.
+    let (tx_shutdown, mut rx_shutdown) = tokio_mpsc::channel::<()>(1);
+    if let Some(tx) = state.insert(&room_id, tx_shutdown) {
         if tx.send(()).await.is_err() {
             eprintln!("[Bilibili Danmaku] 旧任务关闭失败，可能已退出。");
         }
-    }
-
-    let (tx_shutdown, mut rx_shutdown) = tokio_mpsc::channel::<()>(1);
-    {
-        let mut lock = state.inner().0.lock().unwrap();
-        *lock = Some(tx_shutdown);
     }
 
     let app_handle_clone = app_handle.clone();
@@ -99,20 +90,15 @@ pub async fn start_bilibili_danmaku_listener(
     Ok(())
 }
 
+/// Stops one room's listener, or all Bilibili listeners when `room_id` is omitted.
 #[tauri::command]
 pub async fn stop_bilibili_danmaku_listener(
+    room_id: Option<String>,
     state: tauri::State<'_, crate::platforms::common::BilibiliDanmakuState>,
 ) -> Result<(), String> {
-    let previous_tx = {
-        let mut lock = state.inner().0.lock().unwrap();
-        lock.take()
-    };
-    if let Some(tx) = previous_tx {
-        match tx.send(()).await {
-            Ok(()) => Ok(()),
-            Err(_) => Err("停止Bilibili弹幕监听失败：接收方已关闭".to_string()),
-        }
-    } else {
-        Ok(())
+    for tx in state.take(room_id.as_deref().filter(|r| !r.is_empty())) {
+        // An exited listener has dropped its receiver; that's already "stopped".
+        let _ = tx.send(()).await;
     }
+    Ok(())
 }

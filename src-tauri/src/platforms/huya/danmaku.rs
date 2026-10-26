@@ -108,22 +108,12 @@ pub async fn start_huya_danmaku_listener(
         room_id_or_url
     );
 
-    // 停止已有监听
-    let previous_tx = {
-        let mut lock = state.inner().0.lock().unwrap();
-        lock.take()
-    };
-    if let Some(tx) = previous_tx {
+    // 按房间登记关闭通道：同一房间重启时停止旧任务，其他房间不受影响
+    let (tx_shutdown, mut rx_shutdown) = tokio_mpsc::channel::<()>(1);
+    if let Some(tx) = state.insert(&room_id_or_url, tx_shutdown) {
         if tx.send(()).await.is_err() {
             eprintln!("[Huya Danmaku] 旧任务关闭失败，可能已退出。");
         }
-    }
-
-    // 创建新的关闭通道并保存到 State
-    let (tx_shutdown, mut rx_shutdown) = tokio_mpsc::channel::<()>(1);
-    {
-        let mut lock = state.inner().0.lock().unwrap();
-        *lock = Some(tx_shutdown);
     }
 
     let app_handle_clone = app_handle.clone();
@@ -239,28 +229,25 @@ pub async fn start_huya_danmaku_listener(
 
 #[tauri::command]
 pub async fn stop_huya_danmaku_listener(
-    room_id: String,
+    room_id: Option<String>,
     state: tauri::State<'_, crate::platforms::common::HuyaDanmakuState>,
 ) -> Result<(), String> {
     debug!(
-        "[Huya Danmaku] stop_huya_danmaku_listener called for room_id={}",
+        "[Huya Danmaku] stop_huya_danmaku_listener called for room_id={:?}",
         room_id
     );
 
-    // 取出当前监听的停止信号发送器
-    let tx = {
-        let mut lock = state.inner().0.lock().unwrap();
-        lock.take()
-    };
-
-    if let Some(tx) = tx {
-        if let Err(_) = tx.send(()).await {
+    // 指定房间则只停该房间；为空时停止全部虎牙监听
+    let txs = state.take(room_id.as_deref().filter(|r| !r.is_empty()));
+    if txs.is_empty() {
+        debug!("[Huya Danmaku] 没有找到活跃的监听器需要停止");
+    }
+    for tx in txs {
+        if tx.send(()).await.is_err() {
             warn!("[Huya Danmaku] 停止信号发送失败，监听器可能已经退出");
         } else {
-            info!("[Huya Danmaku] 停止信号已发送给 room_id={}", room_id);
+            info!("[Huya Danmaku] 停止信号已发送给 room_id={:?}", room_id);
         }
-    } else {
-        debug!("[Huya Danmaku] 没有找到活跃的监听器需要停止");
     }
 
     Ok(())

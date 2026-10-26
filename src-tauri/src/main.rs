@@ -78,9 +78,8 @@ impl StreamUrlStore {
     }
 }
 
-// State for managing Douyu danmaku listener handles (stop signals)
-#[derive(Default, Clone)]
-pub struct DouyuDanmakuHandles(Arc<Mutex<Option<oneshot::Sender<()>>>>);
+// Douyu danmaku stop signals, one per room
+pub type DouyuDanmakuHandles = platforms::common::DouyuDanmakuState;
 
 #[tauri::command]
 async fn get_stream_url_cmd(room_id: String) -> Result<String, String> {
@@ -161,19 +160,10 @@ async fn start_danmaku_listener(
     window: tauri::Window,
     danmaku_handles: tauri::State<'_, DouyuDanmakuHandles>,
 ) -> Result<(), String> {
-    // Business rule: only one room at a time. Always stop any previous listener first.
-    let previous_sender = {
-        let mut lock = danmaku_handles.0.lock().unwrap();
-        lock.take()
-    };
-    if let Some(sender) = previous_sender {
-        let _ = sender.send(());
-    }
-
+    // Restarting a room replaces its listener; other rooms keep running.
     let (stop_tx, stop_rx) = oneshot::channel();
-    {
-        let mut lock = danmaku_handles.0.lock().unwrap();
-        *lock = Some(stop_tx);
+    if let Some(previous) = danmaku_handles.insert(&room_id, stop_tx) {
+        let _ = previous.send(());
     }
 
     let window_clone = window.clone();
@@ -195,29 +185,17 @@ async fn start_danmaku_listener(
     Ok(())
 }
 
-// Command to stop Douyu danmaku listener
+// Command to stop Douyu danmaku listener(s)
 #[tauri::command]
 async fn stop_danmaku_listener(
-    room_id: String,
+    room_id: Option<String>,
     danmaku_handles: tauri::State<'_, DouyuDanmakuHandles>,
 ) -> Result<(), String> {
-    // The `room_id` parameter is kept for frontend compatibility.
-    // This backend is single-instance, so we always stop the current listener (if any).
-    let sender = {
-        let mut lock = danmaku_handles.0.lock().unwrap();
-        lock.take()
-    };
-    if let Some(sender) = sender {
-        match sender.send(()) {
-            Ok(_) => Ok(()),
-            Err(_) => Err(format!(
-                "Failed to stop Douyu danmaku listener (requested room {}): receiver dropped.",
-                room_id
-            )),
-        }
-    } else {
-        Ok(())
+    // A listener that already exited has dropped its receiver; nothing to do.
+    for sender in danmaku_handles.take(room_id.as_deref().filter(|r| !r.is_empty())) {
+        let _ = sender.send(());
     }
+    Ok(())
 }
 
 // search_anchor seems fine, assuming douyu::search_anchor is correct

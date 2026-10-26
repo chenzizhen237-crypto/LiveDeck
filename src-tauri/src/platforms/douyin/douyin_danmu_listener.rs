@@ -10,19 +10,18 @@ enum ConnectionOutcome {
 
 #[tauri::command]
 pub async fn stop_douyin_danmu_listener(
+    room_id: Option<String>,
     state: tauri::State<'_, crate::platforms::common::DouyinDanmakuState>,
 ) -> Result<(), String> {
-    let previous_tx = {
-        let mut lock = state.inner().0.lock().unwrap();
-        lock.take()
-    };
-
-    if let Some(tx) = previous_tx {
+    // Without a room id (upstream's frontend), stop every Douyin listener.
+    let room = room_id
+        .filter(|r| !r.is_empty())
+        .map(|r| normalize_douyin_live_id(&r));
+    for tx in state.take(room.as_deref()) {
         if tx.send(()).await.is_err() {
             eprintln!("[Douyin Danmaku] Failed to send shutdown. Task might have already completed or panicked.");
         }
     }
-
     Ok(())
 }
 
@@ -38,31 +37,25 @@ pub async fn start_douyin_danmu_listener(
         room_id_or_url
     );
 
-    let previous_tx = {
-        let mut lock = state.inner().0.lock().unwrap();
-        lock.take()
-    };
-
-    if let Some(tx) = previous_tx {
-        println!("[Douyin Danmaku] Sending shutdown to previous Douyin listener task.");
-        if tx.send(()).await.is_err() {
-            eprintln!("[Douyin Danmaku] Failed to send shutdown. Task might have already completed or panicked.");
-        }
-    }
-
     if room_id_or_url == "stop_listening" {
         println!(
-            "[Douyin Danmaku] Received stop_listening signal. Listener will not be restarted."
+            "[Douyin Danmaku] Received stop_listening signal. Stopping all Douyin listeners."
         );
+        for tx in state.take(None) {
+            let _ = tx.send(()).await;
+        }
         return Ok(());
     }
 
     let normalized_room_id = normalize_douyin_live_id(&room_id_or_url);
 
+    // Restarting a room replaces its listener; other rooms keep running.
     let (tx_shutdown, mut rx_shutdown) = tokio_mpsc::channel::<()>(1);
-    {
-        let mut lock = state.inner().0.lock().unwrap();
-        *lock = Some(tx_shutdown);
+    if let Some(tx) = state.insert(&normalized_room_id, tx_shutdown) {
+        println!("[Douyin Danmaku] Sending shutdown to previous listener for this room.");
+        if tx.send(()).await.is_err() {
+            eprintln!("[Douyin Danmaku] Failed to send shutdown. Task might have already completed or panicked.");
+        }
     }
 
     let app_handle_clone = app_handle.clone();

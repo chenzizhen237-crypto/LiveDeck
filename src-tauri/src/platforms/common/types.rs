@@ -58,26 +58,60 @@ pub struct LiveStreamInfo {
     pub web_rid: Option<String>,
 }
 
-// Moved from main.rs
-// State for the Douyin Danmaku listener
-#[derive(Default)]
-#[allow(dead_code)]
-pub struct DouyinDanmakuState(pub std::sync::Mutex<Option<tokio::sync::mpsc::Sender<()>>>);
+/// Stop handles for running danmaku listeners, keyed by room.
+/// Upstream kept a single `Option<Sender>` per platform, so only one room per
+/// platform could receive danmaku and any start silently killed the previous one.
+pub struct DanmakuSessions<T>(std::sync::Mutex<std::collections::HashMap<String, T>>);
 
-// State for the Bilibili Danmaku listener
-#[derive(Default)]
-#[allow(dead_code)]
-pub struct BilibiliDanmakuState(pub std::sync::Mutex<Option<tokio::sync::mpsc::Sender<()>>>);
+impl<T> Default for DanmakuSessions<T> {
+    fn default() -> Self {
+        Self(Default::default())
+    }
+}
 
-// State for the Douyu Danmaku listener
-#[derive(Default)]
-#[allow(dead_code)]
-pub struct DouyuDanmakuState(pub std::sync::Mutex<Option<tokio::sync::mpsc::Sender<()>>>);
+impl<T> DanmakuSessions<T> {
+    /// Registers `handle` for `room`, returning the handle it replaces (to be stopped).
+    pub fn insert(&self, room: &str, handle: T) -> Option<T> {
+        self.0.lock().unwrap().insert(room.to_string(), handle)
+    }
 
-// State for the Huya Danmaku listener
-#[derive(Default)]
-#[allow(dead_code)]
-pub struct HuyaDanmakuState(pub std::sync::Mutex<Option<tokio::sync::mpsc::Sender<()>>>);
+    /// Removes the handle for `room`, or every handle when `room` is `None`.
+    pub fn take(&self, room: Option<&str>) -> Vec<T> {
+        let mut map = self.0.lock().unwrap();
+        match room {
+            Some(room) => map.remove(room).into_iter().collect(),
+            None => map.drain().map(|(_, h)| h).collect(),
+        }
+    }
+
+    pub fn len(&self) -> usize {
+        self.0.lock().unwrap().len()
+    }
+}
+
+type StopTx = tokio::sync::mpsc::Sender<()>;
+pub type DouyinDanmakuState = DanmakuSessions<StopTx>;
+pub type BilibiliDanmakuState = DanmakuSessions<StopTx>;
+pub type HuyaDanmakuState = DanmakuSessions<StopTx>;
+pub type DouyuDanmakuState = DanmakuSessions<tokio::sync::oneshot::Sender<()>>;
+
+#[cfg(test)]
+mod danmaku_sessions_tests {
+    use super::DanmakuSessions;
+
+    #[test]
+    fn rooms_are_tracked_independently() {
+        let s = DanmakuSessions::<u32>::default();
+        assert!(s.insert("a", 1).is_none());
+        assert!(s.insert("b", 2).is_none());
+        assert_eq!(s.insert("a", 3), Some(1), "restarting a room returns the old handle");
+        assert_eq!(s.take(Some("b")), vec![2]);
+        assert_eq!(s.len(), 1);
+        assert!(s.take(Some("missing")).is_empty());
+        assert_eq!(s.take(None), vec![3]);
+        assert_eq!(s.len(), 0);
+    }
+}
 
 #[derive(Serialize, Clone, Debug, specta::Type)]
 pub struct DanmakuFrontendPayload {
