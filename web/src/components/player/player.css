@@ -265,8 +265,9 @@
   transition: opacity 0.2s ease;
 }
 
-.player-danmu-overlay span,
-.player-danmu-overlay div {
+/* Legacy danmu.js overlay (A/B only, see legacyDanmuOverlay.ts): upstream's original styling. */
+.player-danmu-overlay:not(.ld-danmu-host) span,
+.player-danmu-overlay:not(.ld-danmu-host) div {
   font-weight: 900;
   text-shadow:
     1px 0 0 var(--danmu-stroke-color, #444444),
@@ -278,6 +279,111 @@
     1px -1px 0 var(--danmu-stroke-color, #444444),
     -1px -1px 0 var(--danmu-stroke-color, #444444);
   font-family: var(--danmu-font-family, "OPPO Sans", "Microsoft YaHei", "PingFang SC", "Helvetica Neue", Arial, sans-serif);
+}
+
+/* Danmaku engine (danmuOverlay.ts). One stroke pass instead of 8 text-shadows:
+   each bullet is rasterised once, then only its transform changes. */
+.ld-danmu-stage {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  contain: strict;
+}
+
+.ld-danmu {
+  position: absolute;
+  left: 0;
+  white-space: nowrap;
+  pointer-events: auto;
+  cursor: default;
+  will-change: transform;
+  font-family: var(--danmu-font-family, "OPPO Sans", "PingFang SC", "Microsoft YaHei", sans-serif);
+  font-size: var(--ld-danmu-size, 20px);
+  font-weight: 700;
+  line-height: 1.25;
+  padding: 1px 4px;
+  border-radius: 6px;
+  -webkit-text-stroke: 3px var(--danmu-stroke-color, #444444);
+  paint-order: stroke fill;
+}
+
+.ld-danmu.is-hovered {
+  background: rgba(13, 13, 16, 0.55);
+  box-shadow: 0 0 0 1px rgba(61, 217, 245, 0.7);
+  z-index: 2;
+}
+
+.ld-danmu-tip {
+  position: absolute;
+  left: 0;
+  top: 0;
+  z-index: 3;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 4px;
+  border-radius: 999px;
+  background: rgba(21, 27, 45, 0.92);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+  backdrop-filter: blur(16px);
+  pointer-events: auto;
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity 0.12s ease, visibility 0.12s;
+  font: 600 12px/1 "OPPO Sans", "PingFang SC", sans-serif;
+  color: #eef2fa;
+}
+
+.ld-danmu-tip.is-open {
+  opacity: 1;
+  visibility: visible;
+}
+
+.ld-danmu-tip__user {
+  max-width: 120px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 0 6px 0 8px;
+  color: #a8b2c8;
+}
+
+.ld-danmu-tip__user:empty {
+  display: none;
+}
+
+.ld-danmu-tip button {
+  padding: 6px 10px;
+  border-radius: 999px;
+  color: #eef2fa;
+  background: transparent;
+  cursor: pointer;
+}
+
+.ld-danmu-tip button:hover {
+  background: rgba(61, 217, 245, 0.18);
+  color: #3dd9f5;
+}
+
+.ld-danmu-toast {
+  position: absolute;
+  left: 50%;
+  bottom: 72px;
+  z-index: 3;
+  transform: translateX(-50%);
+  padding: 8px 14px;
+  border-radius: 999px;
+  background: rgba(21, 27, 45, 0.92);
+  color: #eef2fa;
+  font: 600 13px/1 "OPPO Sans", "PingFang SC", sans-serif;
+  opacity: 0;
+  transition: opacity 0.15s ease;
+  pointer-events: none;
+}
+
+.ld-danmu-toast.is-open {
+  opacity: 1;
 }
 
 @keyframes player-control-spin {

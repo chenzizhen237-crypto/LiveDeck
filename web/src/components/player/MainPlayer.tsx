@@ -730,6 +730,7 @@ export function MainPlayer({
             overlay.sendComment({
               id: msg.id,
               txt: msg.content,
+              user: msg.nickname,
               duration: 12000,
               mode: "scroll",
               style: {
@@ -775,7 +776,10 @@ export function MainPlayer({
         import("xgplayer"),
         import("xgplayer-flv"),
         import("xgplayer-hls.js"),
-        import("@/components/player/danmuOverlay"),
+        // A/B switch while comparing engines (set localStorage ld_danmu_engine = "legacy").
+        window.localStorage.getItem("ld_danmu_engine") === "legacy"
+          ? import("@/components/player/legacyDanmuOverlay")
+          : import("@/components/player/danmuOverlay"),
         import("@/components/player/plugins")
       ]);
 

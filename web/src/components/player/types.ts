@@ -25,6 +25,8 @@ export interface DanmuOverlayInstance {
   sendComment?: (comment: {
     id?: string;
     txt: string;
+    /** Sender nickname, shown in the hover tooltip. */
+    user?: string;
     duration?: number;
     start?: number;
     mode?: string;

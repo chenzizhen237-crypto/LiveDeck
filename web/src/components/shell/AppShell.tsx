@@ -12,6 +12,7 @@ import { DynamicIsland } from "@/components/livedeck/DynamicIsland";
 import { FollowTrigger } from "@/components/livedeck/FollowPopover";
 import { CategoryPopover } from "@/components/livedeck/CategoryPopover";
 import { SearchModal } from "@/components/livedeck/SearchModal";
+import { PerfHud } from "@/components/livedeck/PerfHud";
 import { PlayerOverlayHost, PlayerOverlayProvider, usePlayerOverlay } from "@/state/playerOverlay/PlayerOverlayProvider";
 import { useCategories, type CategoryItem, type UiPlatform } from "@/state/category/CategoryProvider";
 
@@ -99,6 +100,8 @@ function Shell({ children }: { children: React.ReactNode }) {
         onOpenSearch={() => setPanel("search")}
       />
       {!overlay.isOpen ? <FollowTrigger /> : null}
+
+      <PerfHud />
 
       <AnimatePresence>
         {panel === "categories" ? <CategoryPopover key="cat" platform={platform} onClose={() => setPanel(null)} onPick={pickCategory} /> : null}
