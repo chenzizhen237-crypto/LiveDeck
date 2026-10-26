@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "DTV",
-  "version": "3.0.3",
-  "identifier": "com.dtv.app",
+  "productName": "LiveDeck",
+  "version": "0.1.0",
+  "identifier": "com.livedeck.app",
   "build": {
     "beforeDevCommand": "pnpm -C web dev",
     "devUrl": "http://localhost:2896",
@@ -54,10 +54,14 @@
     ],
     "windows": {
       "nsis": {
-        "languages": ["SimpChinese"]
+        "languages": [
+          "SimpChinese"
+        ]
       },
       "wix": {
-        "language": ["zh-CN"]
+        "language": [
+          "zh-CN"
+        ]
       }
     }
   }

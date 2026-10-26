@@ -7,7 +7,7 @@ import { MotionProvider } from "@/components/motion/MotionProvider";
 import { TauriIndexHtmlFix } from "@/components/app/TauriIndexHtmlFix";
 
 export const metadata: Metadata = {
-  title: "DTV",
+  title: "LiveDeck",
   description: "DTV - Tauri Live Client"
 };
 
