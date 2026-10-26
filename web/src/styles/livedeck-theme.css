@@ -3,9 +3,13 @@
  * Mirrors the semantic variables in LiveDeck/LiveDeck UI.nib (Foundations page).
  * Prefixed --ld- so they don't collide with the legacy player CSS, which still
  * reads the unprefixed upstream variables.
+ *
+ * `inline`: utilities reference var(--ld-…) directly instead of a --color-*
+ * resolved once at :root, so a subtree with data-theme="dark" (split view)
+ * re-themes on its own.
  */
 
-@theme {
+@theme inline {
   --color-app: var(--ld-bg-app);
   --color-surface: var(--ld-bg-surface);
   --color-raised: var(--ld-bg-raised);

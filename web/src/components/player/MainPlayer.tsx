@@ -33,6 +33,7 @@ import { useImageProxy } from "@/hooks/useImageProxy";
 import { danmakuColor as douyuColor, holdRoomDanmaku, holdRoomProxy, subscribeDanmaku } from "@/services/roomSession";
 import { useFollow, type FollowedStreamer, type Platform as FollowPlatform } from "@/state/follow/FollowProvider";
 import { usePlayerUi } from "@/state/playerUi/PlayerUiProvider";
+import { useSplit } from "@/state/split/SplitProvider";
 import type { UiPlatform } from "@/state/category/CategoryProvider";
 
 declare global {
@@ -192,6 +193,7 @@ export function MainPlayer({
   const danmakuReleaseRef = useRef<null | (() => void)>(null);
   const proxyReleaseRef = useRef<null | (() => void)>(null);
   const uiPlatform = toUiPlatform(platform);
+  const split = useSplit();
 
   const disposedRef = useRef(false);
   const activeSessionIdRef = useRef(0);
@@ -576,6 +578,8 @@ export function MainPlayer({
     try {
       danmuOverlayRef.current?.clear?.();
       danmuOverlayRef.current?.stop?.();
+      // destroy() stops the engine's rAF heartbeat and visibility listener.
+      (danmuOverlayRef.current as { destroy?: () => void } | null)?.destroy?.();
     } catch {
       // ignore
     }
@@ -1414,6 +1418,19 @@ export function MainPlayer({
                       }}
                     >
                       {isFollowed ? "取关" : "关注"}
+                    </button>
+                    <button
+                      type="button"
+                      className="player-topbar-follow"
+                      title="分屏：和其他直播间一起看"
+                      onClick={() => {
+                        split.openWith([
+                          { platform: uiPlatform, roomId, anchorName: playerAnchorName ?? roomId, title: playerTitle ?? "", avatar: playerAvatar ?? "", isLive: playerIsLive !== false }
+                        ]);
+                        if (onRequestCloseAction) onRequestCloseAction();
+                      }}
+                    >
+                      分屏
                     </button>
                   </div>
                 </div>

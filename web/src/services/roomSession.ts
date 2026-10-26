@@ -164,6 +164,14 @@ export function subscribeDanmaku(filterRoomId: string, handler: DanmakuHandler):
 }
 
 const danmakuHolds = new Map<string, number>();
+// Backend commands run concurrently; chain each room's start/stop so a stop
+// issued before a start (player → split hand-over) can't land after it.
+const danmakuChains = new Map<string, Promise<unknown>>();
+function chain(key: string, task: () => Promise<unknown>) {
+  const next = (danmakuChains.get(key) ?? Promise.resolve()).then(task, task);
+  danmakuChains.set(key, next.catch(() => {}));
+  return next;
+}
 
 async function startBackend(platform: UiPlatform, roomId: string) {
   const payload = { args: { room_id_str: roomId } };
@@ -186,7 +194,7 @@ export function holdRoomDanmaku(platform: UiPlatform, roomId: string): () => voi
   const n = danmakuHolds.get(key) ?? 0;
   danmakuHolds.set(key, n + 1);
   if (n === 0) {
-    void startBackend(platform, roomId).catch((e) => console.warn("[roomSession] start danmaku failed:", e));
+    void chain(key, () => startBackend(platform, roomId)).catch((e) => console.warn("[roomSession] start danmaku failed:", e));
   }
   let released = false;
   return () => {
@@ -198,7 +206,7 @@ export function holdRoomDanmaku(platform: UiPlatform, roomId: string): () => voi
       return;
     }
     danmakuHolds.delete(key);
-    void stopBackend(platform, roomId).catch(() => {});
+    void chain(key, () => stopBackend(platform, roomId)).catch(() => {});
   };
 }
 

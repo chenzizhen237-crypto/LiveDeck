@@ -11,6 +11,8 @@ import { FollowTrigger } from "@/components/livedeck/FollowPopover";
 import { CategoryPopover } from "@/components/livedeck/CategoryPopover";
 import { SearchModal } from "@/components/livedeck/SearchModal";
 import { PerfHud } from "@/components/livedeck/PerfHud";
+import { SplitPickBanner, SplitView } from "@/components/split/SplitView";
+import { SplitProvider, useSplit } from "@/state/split/SplitProvider";
 import { PlayerOverlayHost, PlayerOverlayProvider, usePlayerOverlay } from "@/state/playerOverlay/PlayerOverlayProvider";
 import { useCategories, type CategoryItem, type UiPlatform } from "@/state/category/CategoryProvider";
 
@@ -30,7 +32,9 @@ export const useShellScroll = () => useContext(ShellScrollContext);
 export function AppShell({ children }: { children: React.ReactNode }) {
   return (
     <PlayerOverlayProvider>
-      <Shell>{children}</Shell>
+      <SplitProvider>
+        <Shell>{children}</Shell>
+      </SplitProvider>
     </PlayerOverlayProvider>
   );
 }
@@ -39,7 +43,10 @@ function Shell({ children }: { children: React.ReactNode }) {
   const router = useRouter();
   const pathname = usePathname() ?? "/";
   const overlay = usePlayerOverlay();
+  const split = useSplit();
   const categories = useCategories();
+  // Split view covers the page unless the user is out picking a room for it.
+  const splitShown = split.open && !split.picking;
   const platform = platformFromPath(pathname);
   const [scrolled, setScrolled] = useState(false);
   const [panel, setPanel] = useState<"categories" | "search" | null>(null);
@@ -87,17 +94,19 @@ function Shell({ children }: { children: React.ReactNode }) {
         <main className="h-full">{children}</main>
       </ShellScrollContext.Provider>
 
+      {split.open ? <SplitView /> : null}
+      <SplitPickBanner />
       <PlayerOverlayHost />
 
       <DynamicIsland
         platform={platform}
         compact={scrolled}
-        playerOpen={overlay.isOpen}
+        playerOpen={overlay.isOpen || splitShown}
         onPlatformChange={goPlatform}
         onOpenCategories={() => setPanel("categories")}
         onOpenSearch={() => setPanel("search")}
       />
-      {!overlay.isOpen ? <FollowTrigger /> : null}
+      {!overlay.isOpen && !splitShown ? <FollowTrigger /> : null}
 
       <PerfHud />
 
