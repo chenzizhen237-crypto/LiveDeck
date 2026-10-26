@@ -2,6 +2,7 @@ pub mod danmaku;
 pub mod live_list;
 pub mod search;
 pub mod stream_url;
+pub mod tars;
 
 #[allow(unused_imports)]
 pub use danmaku::fetch_huya_join_params;

@@ -4,7 +4,6 @@ use std::error::Error;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use base64::{engine::general_purpose, Engine as _};
-use bytes04::Bytes;
 use md5::{Digest, Md5};
 use rand::Rng;
 use regex::Regex;
@@ -14,7 +13,10 @@ use reqwest::header::{
 use serde::Serialize;
 use serde_json::Value;
 use tauri::State;
-use tars_stream::prelude::*;
+use crate::platforms::huya::tars::{
+    encode_struct, DecodeErr, EncodeErr, StructFromTars, StructToTars, TarsDecoder,
+    TarsEncoder,
+};
 
 use crate::platforms::common::FollowHttpClient;
 
@@ -199,12 +201,6 @@ struct HuyaUserId {
     s_qimei: String,
 }
 
-impl ClassName for HuyaUserId {
-    fn _class_name() -> String {
-        "HuyaUserId".to_string()
-    }
-}
-
 impl StructToTars for HuyaUserId {
     fn _encode_to(&self, encoder: &mut TarsEncoder) -> Result<(), EncodeErr> {
         encoder.write_int64(0, self.l_uid)?;
@@ -219,46 +215,13 @@ impl StructToTars for HuyaUserId {
     }
 }
 
-impl StructFromTars for HuyaUserId {
-    fn _decode_from(decoder: &mut TarsDecoder) -> Result<Self, DecodeErr> {
-        Ok(HuyaUserId {
-            l_uid: decoder.read_int64(0, false, 0)?,
-            s_guid: decoder.read_string(1, false, "".to_string())?,
-            s_token: decoder.read_string(2, false, "".to_string())?,
-            s_huya_ua: decoder.read_string(3, false, "".to_string())?,
-            s_cookie: decoder.read_string(4, false, "".to_string())?,
-            i_token_type: decoder.read_int32(5, false, 0)?,
-            s_device_info: decoder.read_string(6, false, "".to_string())?,
-            s_qimei: decoder.read_string(7, false, "".to_string())?,
-        })
-    }
-}
-
-impl EncodeTars for HuyaUserId {
-    fn _encode(&self, encoder: &mut TarsEncoder, tag: u8) -> Result<(), EncodeErr> {
-        encoder.write_struct(tag, self)
-    }
-}
-
-impl DecodeTars for HuyaUserId {
-    fn _decode(decoder: &mut TarsDecoder, tag: u8) -> Result<Self, DecodeErr> {
-        decoder.read_struct(tag, true, HuyaUserId::default())
-    }
-}
-
 #[derive(Clone, Debug, Default)]
 struct GetCdnTokenExReq {
-    s_flv_url: String,    // tag 0
+    s_flv_url: String,     // tag 0
     s_stream_name: String, // tag 1
-    i_loop_time: i32,     // tag 2
-    t_id: HuyaUserId,     // tag 3
-    i_app_id: i32,        // tag 4
-}
-
-impl ClassName for GetCdnTokenExReq {
-    fn _class_name() -> String {
-        "GetCdnTokenExReq".to_string()
-    }
+    i_loop_time: i32,      // tag 2
+    t_id: HuyaUserId,      // tag 3
+    i_app_id: i32,         // tag 4
 }
 
 impl StructToTars for GetCdnTokenExReq {
@@ -272,40 +235,11 @@ impl StructToTars for GetCdnTokenExReq {
     }
 }
 
-impl StructFromTars for GetCdnTokenExReq {
-    fn _decode_from(decoder: &mut TarsDecoder) -> Result<Self, DecodeErr> {
-        Ok(GetCdnTokenExReq {
-            s_flv_url: decoder.read_string(0, false, "".to_string())?,
-            s_stream_name: decoder.read_string(1, false, "".to_string())?,
-            i_loop_time: decoder.read_int32(2, false, 0)?,
-            t_id: decoder.read_struct(3, false, HuyaUserId::default())?,
-            i_app_id: decoder.read_int32(4, false, 66)?,
-        })
-    }
-}
-
-impl EncodeTars for GetCdnTokenExReq {
-    fn _encode(&self, encoder: &mut TarsEncoder, tag: u8) -> Result<(), EncodeErr> {
-        encoder.write_struct(tag, self)
-    }
-}
-
-impl DecodeTars for GetCdnTokenExReq {
-    fn _decode(decoder: &mut TarsDecoder, tag: u8) -> Result<Self, DecodeErr> {
-        decoder.read_struct(tag, true, GetCdnTokenExReq::default())
-    }
-}
-
 #[derive(Clone, Debug, Default)]
 struct GetCdnTokenExResp {
     s_flv_token: String, // tag 0
-    i_expire_time: i32,  // tag 1
-}
-
-impl ClassName for GetCdnTokenExResp {
-    fn _class_name() -> String {
-        "GetCdnTokenExResp".to_string()
-    }
+    #[allow(dead_code)]
+    i_expire_time: i32, // tag 1
 }
 
 impl StructFromTars for GetCdnTokenExResp {
@@ -317,31 +251,16 @@ impl StructFromTars for GetCdnTokenExResp {
     }
 }
 
-impl StructToTars for GetCdnTokenExResp {
-    fn _encode_to(&self, encoder: &mut TarsEncoder) -> Result<(), EncodeErr> {
-        encoder.write_string(0, &self.s_flv_token)?;
-        encoder.write_int32(1, self.i_expire_time)?;
-        Ok(())
-    }
-}
-
-impl EncodeTars for GetCdnTokenExResp {
-    fn _encode(&self, encoder: &mut TarsEncoder, tag: u8) -> Result<(), EncodeErr> {
-        encoder.write_struct(tag, self)
-    }
-}
-
-impl DecodeTars for GetCdnTokenExResp {
-    fn _decode(decoder: &mut TarsDecoder, tag: u8) -> Result<Self, DecodeErr> {
-        decoder.read_struct(tag, true, GetCdnTokenExResp::default())
-    }
+/// UniAttribute values hold the struct at tag 0, wrapped in struct markers.
+fn decode_cdn_token_resp(bytes: &[u8]) -> Result<GetCdnTokenExResp, DecodeErr> {
+    TarsDecoder::from(bytes).read_struct(0, true, GetCdnTokenExResp::default())
 }
 
 fn encode_tars_request_packet(
     request_id: i32,
     servant: &str,
     func: &str,
-    tup_payload: Bytes,
+    tup_payload: Vec<u8>,
 ) -> Result<Vec<u8>, String> {
     let mut encoder = TarsEncoder::new();
     encoder
@@ -371,10 +290,10 @@ fn encode_tars_request_packet(
 
     let empty: BTreeMap<String, String> = BTreeMap::new();
     encoder
-        .write_map(9, &empty)
+        .write_string_map(9, &empty)
         .map_err(|e| e.to_string())?;
     encoder
-        .write_map(10, &empty)
+        .write_string_map(10, &empty)
         .map_err(|e| e.to_string())?;
 
     let body = encoder.to_bytes();
@@ -385,7 +304,7 @@ fn encode_tars_request_packet(
     Ok(out)
 }
 
-fn decode_tars_response_packet_payload(payload: &[u8]) -> Result<(i32, Bytes, String), String> {
+fn decode_tars_response_packet_payload(payload: &[u8]) -> Result<(i32, Vec<u8>, String), String> {
     // 1) Try standard Tars ResponsePacket layout:
     // iVersion(1), cPacketType(2), iRequestId(3), iMessageType(4), iRet(5), sBuffer(6), status(7), sResultDesc(8)
     {
@@ -395,9 +314,8 @@ fn decode_tars_response_packet_payload(payload: &[u8]) -> Result<(i32, Bytes, St
             let _ = decoder.read_int32(3, false, 0);
             let _ = decoder.read_int32(4, false, 0);
             if let Ok(ret) = decoder.read_int32(5, false, -1) {
-                if let Ok(s_buffer) = decoder.read_bytes(6, false, Bytes::new()) {
-                    let _status: BTreeMap<String, String> =
-                        decoder.read_map(7, false, BTreeMap::new()).unwrap_or_default();
+                if let Ok(s_buffer) = decoder.read_bytes(6, false, Vec::new()) {
+                    let _status = decoder.read_string_map(7).unwrap_or_default();
                     let result_desc = decoder
                         .read_string(8, false, "".to_string())
                         .unwrap_or_default();
@@ -422,18 +340,16 @@ fn decode_tars_response_packet_payload(payload: &[u8]) -> Result<(i32, Bytes, St
         .read_string(6, false, "".to_string())
         .map_err(|e| e.to_string())?;
     let s_buffer = decoder
-        .read_bytes(7, false, Bytes::new())
+        .read_bytes(7, false, Vec::new())
         .map_err(|e| e.to_string())?;
     let _timeout = decoder.read_int32(8, false, 0).unwrap_or(0);
-    let _context: BTreeMap<String, String> =
-        decoder.read_map(9, false, BTreeMap::new()).unwrap_or_default();
-    let _status: BTreeMap<String, String> =
-        decoder.read_map(10, false, BTreeMap::new()).unwrap_or_default();
+    let _context = decoder.read_string_map(9).unwrap_or_default();
+    let _status = decoder.read_string_map(10).unwrap_or_default();
 
     Ok((0, s_buffer, "".to_string()))
 }
 
-fn decode_tars_response_packet(buf: &[u8]) -> Result<(i32, Bytes, String), String> {
+fn decode_tars_response_packet(buf: &[u8]) -> Result<(i32, Vec<u8>, String), String> {
     // Prefer standard Tars framing: 4-byte length prefix (network byte order).
     if buf.len() >= 4 {
         let declared = u32::from_be_bytes([buf[0], buf[1], buf[2], buf[3]]) as usize;
@@ -464,10 +380,14 @@ async fn huya_get_cdn_token_info_ex(
         },
         i_app_id: 66,
     };
-    let mut req_map: BTreeMap<String, Bytes> = BTreeMap::new();
-    let req_bytes = TarsEncoder::individual_encode(&req).map_err(|e| e.to_string())?;
+    let mut req_map: BTreeMap<String, Vec<u8>> = BTreeMap::new();
+    let req_bytes = encode_struct(&req).map_err(|e| e.to_string())?;
     req_map.insert("tReq".to_string(), req_bytes);
-    let tup_payload = TarsEncoder::individual_encode(&req_map).map_err(|e| e.to_string())?;
+    let mut map_encoder = TarsEncoder::new();
+    map_encoder
+        .write_bytes_map(0, &req_map)
+        .map_err(|e| e.to_string())?;
+    let tup_payload = map_encoder.to_bytes();
 
     let request_bytes = encode_tars_request_packet(1, "liveui", "getCdnTokenInfoEx", tup_payload)?;
 
@@ -524,9 +444,9 @@ async fn huya_get_cdn_token_info_ex(
 
     // Decode response UniAttribute. Huya may return simple or complex map layouts; accept both.
     // 1) Try simple: map<string, bytes>
-    if let Ok(simple) = TarsDecoder::individual_decode::<BTreeMap<String, Bytes>>(&s_buffer) {
+    if let Ok(simple) = TarsDecoder::from(s_buffer.as_slice()).read_bytes_map(0) {
         if let Some(v) = simple.get("tRsp") {
-            if let Ok(rsp) = TarsDecoder::individual_decode::<GetCdnTokenExResp>(v) {
+            if let Ok(rsp) = decode_cdn_token_resp(v) {
                 if !rsp.s_flv_token.trim().is_empty() {
                     return Ok(rsp.s_flv_token);
                 }
@@ -535,15 +455,16 @@ async fn huya_get_cdn_token_info_ex(
     }
 
     // 2) Try complex: map<string, map<string, bytes>>
-    let complex: BTreeMap<String, BTreeMap<String, Bytes>> =
-        TarsDecoder::individual_decode(&s_buffer).map_err(|e| e.to_string())?;
+    let complex = TarsDecoder::from(s_buffer.as_slice())
+        .read_nested_bytes_map(0)
+        .map_err(|e| e.to_string())?;
     let inner = complex
         .get("tRsp")
         .ok_or_else(|| "Huya WUP response missing tRsp".to_string())?;
 
     // Prefer matching class name; otherwise try decode from any inner payload.
     if let Some(v) = inner.get("GetCdnTokenExResp") {
-        let rsp: GetCdnTokenExResp = TarsDecoder::individual_decode(v).map_err(|e| e.to_string())?;
+        let rsp = decode_cdn_token_resp(v).map_err(|e| e.to_string())?;
         if rsp.s_flv_token.trim().is_empty() {
             return Err("Huya WUP returned empty token".to_string());
         }
@@ -551,7 +472,7 @@ async fn huya_get_cdn_token_info_ex(
     }
 
     for (_k, v) in inner {
-        if let Ok(rsp) = TarsDecoder::individual_decode::<GetCdnTokenExResp>(v) {
+        if let Ok(rsp) = decode_cdn_token_resp(v) {
             if !rsp.s_flv_token.trim().is_empty() {
                 return Ok(rsp.s_flv_token);
             }

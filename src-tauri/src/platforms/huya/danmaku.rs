@@ -1,6 +1,6 @@
 use futures_util::{SinkExt, StreamExt};
 use log::{debug, info, warn};
-use tars_stream::prelude::*;
+use crate::platforms::huya::tars::*;
 use tauri::Emitter;
 use tokio::sync::mpsc as tokio_mpsc;
 use tokio::time::{sleep, Duration};
@@ -266,7 +266,7 @@ pub async fn stop_huya_danmaku_listener(
     Ok(())
 }
 
-// 采用 tars_stream 的实现（参考 all_in_one.rs），保留 Tauri 命令，对旧 jce 逻辑停用
+// 采用本地 tars 实现（stable Rust）（参考 all_in_one.rs），保留 Tauri 命令，对旧 jce 逻辑停用
 
 struct HuyaUser {
     _uid: i64,
@@ -450,7 +450,7 @@ async fn get_ws_info_tars(room_id_or_url: &str) -> Result<(String, Vec<u8>), Str
     let b = wscmd.to_bytes();
     debug!("[Huya Danmaku] reg payload built, len={}", b.len());
 
-    Ok((WS_URL.to_owned(), b.as_ref().to_vec()))
+    Ok((WS_URL.to_owned(), b))
 }
 
 fn decode_msg_tars(data: &[u8]) -> anyhow::Result<Option<(String, String)>> {
