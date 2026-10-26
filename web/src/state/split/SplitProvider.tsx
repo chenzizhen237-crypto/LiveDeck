@@ -7,9 +7,11 @@ import React, { createContext, useCallback, useContext, useEffect, useMemo, useR
 import { v4 as uuidv4 } from "uuid";
 
 import type { RoomRef } from "@/hooks/useOpenRoom";
+import { captureSetup, isDirty, type SavedSetup, type SplitSnapshot } from "./setups";
 import {
   PRESETS,
   applySlots,
+  autoArrange,
   clampDim,
   dragMove,
   freeCells,
@@ -17,7 +19,8 @@ import {
   resizeGrid,
   resizeTile,
   swapTiles,
-  type Rect
+  type Rect,
+  type Arrangement
 } from "./layout";
 
 export interface SplitTile {
@@ -38,6 +41,8 @@ interface SplitState {
   layoutName: string;
   danmakuAll: boolean;
   audioFollowsClick: boolean;
+  /** The saved setup this view was opened from or last saved as. */
+  setupId: string | null;
 }
 
 /** Where "Add room" puts the next pick: a specific empty cell, or replacing a tile's room. */
@@ -67,9 +72,28 @@ type SplitContextValue = SplitState & {
   beginPick: (target: PickTarget) => void;
   cancelPick: () => void;
   emptyCells: Rect[];
+  /** What Auto Arrange would produce for a grid of this width/height ratio (null: nothing to do). */
+  previewArrange: (gridAspect: number) => Arrangement<SplitTile> | null;
+  /** Applies Auto Arrange; the previous layout is kept for undoLayout(). */
+  arrange: (gridAspect: number) => Arrangement<SplitTile> | null;
+  canUndoLayout: boolean;
+  undoLayout: () => void;
+  setups: SavedSetup[];
+  currentSetup: SavedSetup | null;
+  /** The view differs from the setup it came from. */
+  dirty: boolean;
+  saveSetup: (name: string, layoutOnly: boolean) => SavedSetup;
+  updateSetup: (id: string) => void;
+  /** "too-small": a layout-only setup with fewer cells than open rooms. */
+  openSetup: (id: string) => "ok" | "too-small" | "missing";
+  renameSetup: (id: string, name: string) => void;
+  duplicateSetup: (id: string) => SavedSetup | null;
+  /** Returns an undo that puts it back where it was. */
+  deleteSetup: (id: string) => (() => void) | null;
 };
 
 const STORAGE_KEY = "livedeck_split_v1";
+const SETUPS_KEY = "livedeck_split_setups_v1";
 const sameRoom = (a: RoomRef, b: RoomRef) => a.platform === b.platform && a.roomId === b.roomId;
 
 const INITIAL: SplitState = {
@@ -81,7 +105,8 @@ const INITIAL: SplitState = {
   zoomId: null,
   layoutName: "1 × 2",
   danmakuAll: false,
-  audioFollowsClick: true
+  audioFollowsClick: true,
+  setupId: null
 };
 
 function gridName(cols: number, rows: number) {
@@ -113,6 +138,8 @@ const SplitContext = createContext<SplitContextValue | null>(null);
 export function SplitProvider({ children }: { children: React.ReactNode }) {
   const [state, setState] = useState<SplitState>(INITIAL);
   const [picking, setPicking] = useState<PickTarget>(null);
+  const [setups, setSetups] = useState<SavedSetup[]>([]);
+  const [layoutUndo, setLayoutUndo] = useState<Pick<SplitState, "cols" | "rows" | "tiles" | "layoutName"> | null>(null);
   const hydrated = useRef(false);
   const stateRef = useRef(state);
   stateRef.current = state;
@@ -122,6 +149,8 @@ export function SplitProvider({ children }: { children: React.ReactNode }) {
     try {
       const saved = JSON.parse(window.localStorage.getItem(STORAGE_KEY) || "null");
       if (saved && Array.isArray(saved.tiles)) setState({ ...INITIAL, ...saved, open: false, zoomId: null });
+      const savedSetups = JSON.parse(window.localStorage.getItem(SETUPS_KEY) || "null");
+      if (Array.isArray(savedSetups)) setSetups(savedSetups);
     } catch {
       // ignore
     }
@@ -137,6 +166,22 @@ export function SplitProvider({ children }: { children: React.ReactNode }) {
       // ignore
     }
   }, [state]);
+
+  useEffect(() => {
+    if (!hydrated.current) return;
+    try {
+      window.localStorage.setItem(SETUPS_KEY, JSON.stringify(setups));
+    } catch {
+      // ignore
+    }
+  }, [setups]);
+
+  // Any layout change other than Auto Arrange makes its undo stale.
+  const layoutKey = `${state.cols}x${state.rows}:${state.tiles.map((t) => `${t.id}${t.rect.col}${t.rect.row}${t.rect.colSpan}${t.rect.rowSpan}`).join()}`;
+  const arrangedKey = useRef<string | null>(null);
+  useEffect(() => {
+    if (layoutUndo && arrangedKey.current !== layoutKey) setLayoutUndo(null);
+  }, [layoutKey, layoutUndo]);
 
   const openWith = useCallback((rooms: RoomRef[]) => {
     setState((s) => {
@@ -255,6 +300,125 @@ export function SplitProvider({ children }: { children: React.ReactNode }) {
   const beginPick = useCallback((target: PickTarget) => setPicking(target ?? {}), []);
   const cancelPick = useCallback(() => setPicking(null), []);
 
+  const previewArrange = useCallback((gridAspect: number) => {
+    const s = stateRef.current;
+    const a = autoArrange(s.tiles, gridAspect);
+    if (!a) return null;
+    const same = a.cols === s.cols && a.rows === s.rows && a.tiles.every((t, i) => JSON.stringify(t.rect) === JSON.stringify(s.tiles[i].rect));
+    return same ? null : a;
+  }, []);
+
+  const arrange = useCallback(
+    (gridAspect: number) => {
+      const s = stateRef.current;
+      const a = previewArrange(gridAspect);
+      if (!a) return null;
+      setLayoutUndo({ cols: s.cols, rows: s.rows, tiles: s.tiles, layoutName: s.layoutName });
+      arrangedKey.current = `${a.cols}x${a.rows}:${a.tiles.map((t) => `${t.id}${t.rect.col}${t.rect.row}${t.rect.colSpan}${t.rect.rowSpan}`).join()}`;
+      setState((cur) => ({ ...cur, cols: a.cols, rows: a.rows, tiles: a.tiles, layoutName: a.name, zoomId: null }));
+      return a;
+    },
+    [previewArrange]
+  );
+
+  const undoLayout = useCallback(() => {
+    setLayoutUndo((u) => {
+      // Any change after arranging clears the undo, so this restores an untouched arrangement.
+      if (u) setState((cur) => ({ ...cur, cols: u.cols, rows: u.rows, tiles: u.tiles, layoutName: u.layoutName }));
+      return null;
+    });
+  }, []);
+
+  const snapshot = (s: SplitState): SplitSnapshot => s;
+
+  const saveSetup = useCallback((name: string, layoutOnly: boolean) => {
+    const setup = captureSetup(snapshot(stateRef.current), uuidv4(), name.trim() || "未命名方案", layoutOnly);
+    setSetups((list) => [setup, ...list]);
+    setState((s) => ({ ...s, setupId: setup.id }));
+    return setup;
+  }, []);
+
+  const updateSetup = useCallback((id: string) => {
+    setSetups((list) => list.map((x) => (x.id === id ? captureSetup(snapshot(stateRef.current), x.id, x.name, x.layoutOnly) : x)));
+    setState((s) => ({ ...s, setupId: id }));
+  }, []);
+
+  const openSetup = useCallback(
+    (id: string) => {
+      const setup = setups.find((x) => x.id === id);
+      if (!setup) return "missing" as const;
+      const s = stateRef.current;
+      if (setup.layoutOnly) {
+        const ordered = [...s.tiles].sort((a, b) => a.rect.row - b.rect.row || a.rect.col - b.rect.col);
+        const placed = applySlots(ordered, setup.tiles.map((t) => t.rect));
+        if (!placed) return "too-small" as const;
+        setState((cur) => ({ ...cur, cols: setup.cols, rows: setup.rows, tiles: placed, layoutName: setup.layoutName, zoomId: null, setupId: id }));
+        return "ok" as const;
+      }
+      // Rooms already on screen keep their tile id, so their streams keep running.
+      const existing = new Map(s.tiles.map((t) => [`${t.room.platform}:${t.room.roomId}`, t.id]));
+      const tiles: SplitTile[] = setup.tiles
+        .filter((t): t is { room: RoomRef; rect: Rect } => !!t.room)
+        .map((t) => ({ id: existing.get(`${t.room.platform}:${t.room.roomId}`) ?? uuidv4(), room: t.room, rect: { ...t.rect } }));
+      const focusId = setup.focusIndex !== null ? tiles[setup.focusIndex]?.id ?? null : tiles[0]?.id ?? null;
+      setState((cur) => ({
+        ...cur,
+        open: true,
+        cols: setup.cols,
+        rows: setup.rows,
+        tiles,
+        layoutName: setup.layoutName,
+        focusId,
+        zoomId: null,
+        danmakuAll: setup.danmakuAll,
+        audioFollowsClick: setup.audioFollowsClick,
+        setupId: id
+      }));
+      return "ok" as const;
+    },
+    [setups]
+  );
+
+  const renameSetup = useCallback((id: string, name: string) => {
+    const next = name.trim();
+    if (!next) return;
+    setSetups((list) => list.map((x) => (x.id === id ? { ...x, name: next, updatedAt: Date.now() } : x)));
+  }, []);
+
+  const duplicateSetup = useCallback(
+    (id: string) => {
+      const src = setups.find((x) => x.id === id);
+      if (!src) return null;
+      const copy: SavedSetup = { ...src, id: uuidv4(), name: `${src.name} 副本`, updatedAt: Date.now() };
+      setSetups((list) => {
+        const i = list.findIndex((x) => x.id === id);
+        return [...list.slice(0, i + 1), copy, ...list.slice(i + 1)];
+      });
+      return copy;
+    },
+    [setups]
+  );
+
+  const deleteSetup = useCallback(
+    (id: string) => {
+      const index = setups.findIndex((x) => x.id === id);
+      if (index < 0) return null;
+      const removed = setups[index];
+      const wasCurrent = stateRef.current.setupId === id;
+      setSetups((list) => list.filter((x) => x.id !== id));
+      // The current view stays as it is; it just isn't tied to a setup any more.
+      if (wasCurrent) setState((s) => ({ ...s, setupId: null }));
+      return () => {
+        setSetups((list) => (list.some((x) => x.id === id) ? list : [...list.slice(0, index), removed, ...list.slice(index)]));
+        if (wasCurrent) setState((s) => (s.setupId === null ? { ...s, setupId: id } : s));
+      };
+    },
+    [setups]
+  );
+
+  const currentSetup = useMemo(() => setups.find((x) => x.id === state.setupId) ?? null, [setups, state.setupId]);
+  const dirty = useMemo(() => (currentSetup ? isDirty(state, currentSetup) : false), [currentSetup, state]);
+
   const emptyCells = useMemo(() => freeCells(state.tiles, state.cols, state.rows), [state.cols, state.rows, state.tiles]);
 
   const value = useMemo<SplitContextValue>(
@@ -278,9 +442,22 @@ export function SplitProvider({ children }: { children: React.ReactNode }) {
       setAudioFollowsClick,
       beginPick,
       cancelPick,
-      emptyCells
+      emptyCells,
+      previewArrange,
+      arrange,
+      canUndoLayout: !!layoutUndo,
+      undoLayout,
+      setups,
+      currentSetup,
+      dirty,
+      saveSetup,
+      updateSetup,
+      openSetup,
+      renameSetup,
+      duplicateSetup,
+      deleteSetup
     }),
-    [state, picking, openWith, close, addRoom, removeTile, focus, toggleZoom, applyPreset, setGrid, spanTile, previewSpan, swap, previewMove, move, setDanmakuAll, setAudioFollowsClick, beginPick, cancelPick, emptyCells]
+    [state, picking, openWith, close, addRoom, removeTile, focus, toggleZoom, applyPreset, setGrid, spanTile, previewSpan, swap, previewMove, move, setDanmakuAll, setAudioFollowsClick, beginPick, cancelPick, emptyCells, previewArrange, arrange, layoutUndo, undoLayout, setups, currentSetup, dirty, saveSetup, updateSetup, openSetup, renameSetup, duplicateSetup, deleteSetup]
   );
 
   return <SplitContext.Provider value={value}>{children}</SplitContext.Provider>;

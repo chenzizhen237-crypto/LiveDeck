@@ -201,3 +201,60 @@ export function gridFor(n: number): { cols: number; rows: number } {
   for (const [cols, rows] of steps) if (cols * rows >= n) return { cols, rows };
   return { cols: MAX_DIM, rows: MAX_DIM };
 }
+
+const VIDEO_ASPECT = 16 / 9;
+const area = (r: Rect) => r.colSpan * r.rowSpan;
+const readingOrder = (a: Placed, b: Placed) => a.rect.row - b.rect.row || a.rect.col - b.rect.col;
+
+/** Empty cells cost 1 each; a cell (or main slot) shaped far from 16:9 costs 2 per e-fold. */
+function shapeCost(slotAspect: number) {
+  return 2 * Math.abs(Math.log(slotAspect / VIDEO_ASPECT));
+}
+
+export interface Arrangement<T extends Placed> {
+  cols: number;
+  rows: number;
+  tiles: T[];
+  name: string;
+}
+
+/**
+ * Compacts the grid around its tiles. Deterministic: fewest empty cells with
+ * cells closest to 16:9 for the window's shape (`gridAspect` = width / height).
+ * If one tile is clearly the biggest it stays the biggest, via a main-slot
+ * template; everything else keeps its reading order. Tile ids are untouched,
+ * so players move without reconnecting.
+ */
+export function autoArrange<T extends Placed>(tiles: T[], gridAspect: number): Arrangement<T> | null {
+  const n = tiles.length;
+  if (n === 0) return null;
+  const ordered = [...tiles].sort(readingOrder);
+  const biggest = ordered.reduce((a, b) => (area(b.rect) > area(a.rect) ? b : a));
+  const hasMain = n >= 3 && ordered.every((t) => t === biggest || area(t.rect) < area(biggest.rect));
+
+  type Candidate = { cost: number; cols: number; rows: number; slots: Rect[]; name: string; main: boolean };
+  const candidates: Candidate[] = [];
+  for (let cols = 1; cols <= MAX_DIM; cols++) {
+    for (let rows = 1; rows <= MAX_DIM; rows++) {
+      if (cols * rows < n) continue;
+      const cellAspect = (gridAspect * rows) / cols;
+      candidates.push({ cost: cols * rows - n + shapeCost(cellAspect), cols, rows, slots: uniformSlots(cols, rows), name: `${rows} × ${cols}`, main: false });
+    }
+  }
+  if (hasMain) {
+    for (const p of PRESETS) {
+      const main = p.slots[0];
+      if (area(main) < 2 || p.slots.length < n) continue;
+      const mainAspect = (gridAspect * (main.colSpan / p.cols)) / (main.rowSpan / p.rows);
+      candidates.push({ cost: p.slots.length - n + shapeCost(mainAspect), cols: p.cols, rows: p.rows, slots: p.slots, name: p.name, main: true });
+    }
+  }
+  // With a main tile, prefer templates that keep it; uniform grids are the fallback.
+  const pool = hasMain && candidates.some((c) => c.main) ? candidates.filter((c) => c.main) : candidates;
+  const best = pool.reduce((a, b) => (b.cost < a.cost - 1e-9 ? b : a));
+  const order = best.main ? [biggest, ...ordered.filter((t) => t !== biggest)] : ordered;
+  const placed = applySlots(order, best.slots);
+  if (!placed) return null;
+  const byId = new Map(placed.map((t) => [t.id, t]));
+  return { cols: best.cols, rows: best.rows, tiles: tiles.map((t) => byId.get(t.id)!), name: best.name };
+}

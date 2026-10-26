@@ -6,6 +6,7 @@ import assert from "node:assert/strict";
 import {
   PRESETS,
   applySlots,
+  autoArrange,
   dragMove,
   freeCells,
   gridFor,
@@ -109,4 +110,37 @@ test("resize handles move only their own sides", () => {
   assert.deepEqual(rectFromHandle(r, "w", { col: 0, row: 3 }), { col: 0, row: 1, colSpan: 2, rowSpan: 1 });
   // Dragging the left edge past the right one flips instead of going negative.
   assert.deepEqual(rectFromHandle({ col: 1, row: 0, colSpan: 2, rowSpan: 1 }, "w", { col: 3, row: 0 }), { col: 2, row: 0, colSpan: 2, rowSpan: 1 });
+});
+
+// A typical window: grid area ~1420×780.
+const WIDE = 1420 / 780;
+const singles = (n) => Array.from({ length: n }, (_, i) => t(`r${i}`, i % 4, Math.floor(i / 4)));
+
+test("auto arrange compacts plain grids to the proposal's targets", () => {
+  const shape = (n) => {
+    const a = autoArrange(singles(n), WIDE);
+    return `${a.rows}×${a.cols}`;
+  };
+  assert.equal(shape(2), "1×2");
+  assert.equal(shape(4), "2×2");
+  assert.equal(shape(5), "2×3", "5 rooms leave one empty cell");
+  assert.equal(shape(6), "2×3");
+});
+
+test("auto arrange keeps reading order and every tile", () => {
+  // Scattered on 4×4: reading order a(0,0) b(3,0) c(1,2) d(0,3)
+  const tiles = [t("c", 1, 2), t("a", 0, 0), t("d", 0, 3), t("b", 3, 0)];
+  const a = autoArrange(tiles, WIDE);
+  assert.equal(a.tiles.length, 4);
+  const byPos = [...a.tiles].sort((x, y) => x.rect.row - y.rect.row || x.rect.col - y.rect.col).map((x) => x.id);
+  assert.deepEqual(byPos, ["a", "b", "c", "d"]);
+  assert.equal(freeCells(a.tiles, a.cols, a.rows).length, 0);
+});
+
+test("auto arrange keeps a clearly biggest tile the biggest", () => {
+  const tiles = [t("main", 0, 0, 2, 2), t("x", 3, 0), t("y", 3, 2), t("z", 0, 3), t("w", 2, 3)];
+  const a = autoArrange(tiles, WIDE);
+  const main = a.tiles.find((x) => x.id === "main").rect;
+  for (const x of a.tiles) if (x.id !== "main") assert.ok(x.rect.colSpan * x.rect.rowSpan < main.colSpan * main.rowSpan);
+  for (let i = 0; i < a.tiles.length; i++) for (let j = i + 1; j < a.tiles.length; j++) assert.ok(!overlaps(a.tiles[i].rect, a.tiles[j].rect));
 });

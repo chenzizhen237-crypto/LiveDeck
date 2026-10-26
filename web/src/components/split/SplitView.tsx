@@ -2,8 +2,8 @@
 // page, with the island above it and a floating toolbar below.
 
 import React, { useCallback, useEffect, useRef, useState } from "react";
-import { AnimatePresence } from "framer-motion";
-import { LayoutGrid, MessageSquareText, Minimize2, MoveDiagonal2, Plus, Scan, Volume2 } from "lucide-react";
+import { AnimatePresence, m } from "framer-motion";
+import { Check, LayoutDashboard, LayoutGrid, MessageSquareText, Minimize2, MoveDiagonal2, Plus, Scan, Trash2, TriangleAlert, Volume2 } from "lucide-react";
 
 import { PlatformMark } from "@/components/livedeck/primitives";
 import { applyDanmuFontFamilyForOS } from "@/components/player/constants";
@@ -11,7 +11,8 @@ import { usePlayerOverlay } from "@/state/playerOverlay/PlayerOverlayProvider";
 import { useSplit, type PickTarget } from "@/state/split/SplitProvider";
 import { rectFromHandle, type Rect } from "@/state/split/layout";
 import { AddRoomPopover } from "./AddRoomPopover";
-import { LayoutPicker } from "./LayoutPicker";
+import { LayoutPicker, type PanelNotice } from "./LayoutPicker";
+import { SaveSetupDialog } from "./SaveSetupDialog";
 import { SplitTile } from "./SplitTile";
 
 const GAP = 6;
@@ -45,6 +46,21 @@ export function SplitView() {
   const [panel, setPanel] = useState<null | "layout" | { add: PickTarget }>(null);
   const [drag, setDrag] = useState<Drag | null>(null);
   const dragAbort = useRef<null | (() => void)>(null);
+  const [notice, setNotice] = useState<PanelNotice | null>(null);
+  const [saveAs, setSaveAs] = useState<string | null>(null);
+  const noticeTimer = useRef(0);
+
+  const notify = useCallback((n: PanelNotice) => {
+    setNotice(n);
+    window.clearTimeout(noticeTimer.current);
+    noticeTimer.current = window.setTimeout(() => setNotice(null), n.undo ? 6000 : 3000);
+  }, []);
+  useEffect(() => () => window.clearTimeout(noticeTimer.current), []);
+
+  const gridAspect = () => {
+    const b = gridRef.current?.getBoundingClientRect();
+    return b && b.height > 0 ? b.width / b.height : 16 / 9;
+  };
   const focused = split.tiles.find((t) => t.id === split.focusId) ?? null;
   const hidden = !!split.picking;
 
@@ -58,6 +74,7 @@ export function SplitView() {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== "Escape") return;
+      if (saveAs !== null) return; // the dialog handles its own Esc
       if (dragAbort.current) dragAbort.current();
       else if (split.picking) split.cancelPick();
       else if (panel) setPanel(null);
@@ -69,7 +86,7 @@ export function SplitView() {
     };
     window.addEventListener("keydown", onKey, true);
     return () => window.removeEventListener("keydown", onKey, true);
-  }, [editing, panel, split]);
+  }, [editing, panel, saveAs, split]);
 
   const cellAt = useCallback(
     (x: number, y: number) => {
@@ -278,15 +295,50 @@ export function SplitView() {
         </div>
       </div>
 
-      {editing ? (
-        <div className="absolute inset-x-0 bottom-[66px] z-[20] flex justify-center">
-          <div className="flex items-center gap-2 rounded-full border border-line-strong bg-elevated py-1 pr-1 pl-3 text-xs font-semibold text-fg shadow-float">
+      {/* above the toolbar: notices (with undo), unsaved-changes bar, edit-mode hint */}
+      <div className="pointer-events-none absolute inset-x-0 bottom-[66px] z-[20] flex flex-col items-center gap-2">
+        <AnimatePresence>
+          {notice && panel !== "layout" ? <NoticeToast key={notice.message} notice={notice} onDismiss={() => setNotice(null)} /> : null}
+        </AnimatePresence>
+        {split.currentSetup && split.dirty && !editing ? (
+          <div className="pointer-events-auto flex items-center gap-2.5 rounded-full border border-line-strong bg-elevated py-1.5 pr-1.5 pl-3.5 text-xs text-fg shadow-float">
+            <span className="size-[7px] rounded-full bg-replay" />
+            <span className="font-bold">{split.currentSetup.name}</span>
+            <span className="text-fg-3">· 未保存的更改</span>
+            <button type="button" onClick={() => setSaveAs(`${split.currentSetup!.name} 副本`)} className="rounded-full bg-chip px-3 py-1 font-bold hover:bg-hover">
+              另存为
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                split.updateSetup(split.currentSetup!.id);
+                notify({ kind: "saved", message: `已保存「${split.currentSetup!.name}」` });
+              }}
+              className="rounded-full bg-accent px-3 py-1 font-bold text-on-accent"
+            >
+              保存更改
+            </button>
+          </div>
+        ) : null}
+        {editing ? (
+          <div className="pointer-events-auto flex items-center gap-2 rounded-full border border-line-strong bg-elevated py-1 pr-1 pl-3 text-xs font-semibold text-fg shadow-float">
             拖动画面移动或交换 <span className="text-fg-3">·</span> 拖动四边或四角跨格
             <button type="button" onClick={() => setEditing(false)} className="rounded-full bg-accent px-3 py-1 font-bold text-on-accent">
               完成
             </button>
           </div>
+        ) : null}
+      </div>
+
+      {/* while the layout panel is open its notices show at the top, clear of the panel */}
+      {notice && panel === "layout" ? (
+        <div className="pointer-events-none absolute inset-x-0 top-14 z-[20] flex justify-center">
+          <NoticeToast notice={notice} onDismiss={() => setNotice(null)} />
         </div>
+      ) : null}
+
+      {saveAs !== null ? (
+        <SaveSetupDialog initialName={saveAs} onClose={() => setSaveAs(null)} onSaved={(name) => notify({ kind: "saved", message: `已保存「${name}」` })} />
       ) : null}
 
       {/* toolbar */}
@@ -323,7 +375,18 @@ export function SplitView() {
           </ToolButton>
 
           <AnimatePresence>
-            {panel === "layout" ? <LayoutPicker key="layout" onClose={() => setPanel(null)} /> : null}
+            {panel === "layout" ? (
+              <LayoutPicker
+                key="layout"
+                onClose={() => setPanel(null)}
+                gridAspect={gridAspect()}
+                onNotice={notify}
+                onRequestSave={() => {
+                  setPanel(null);
+                  setSaveAs(split.currentSetup && split.dirty ? `${split.currentSetup.name} 副本` : "");
+                }}
+              />
+            ) : null}
             {panel && typeof panel === "object" ? (
               <AddRoomPopover key="add" target={panel.add} onClose={() => setPanel(null)} className="absolute bottom-[calc(100%+10px)] left-1/2 -translate-x-1/2" />
             ) : null}
@@ -347,6 +410,45 @@ export function SplitPickBanner() {
         </button>
       </div>
     </div>
+  );
+}
+
+function NoticeToast({ notice, onDismiss }: { notice: PanelNotice; onDismiss: () => void }) {
+  const icon =
+    notice.kind === "arranged" ? (
+      <LayoutDashboard size={15} className="text-accent" />
+    ) : notice.kind === "deleted" ? (
+      <Trash2 size={15} className="text-live" />
+    ) : notice.kind === "error" ? (
+      <TriangleAlert size={15} className="text-replay" />
+    ) : (
+      <Check size={15} className="text-online" />
+    );
+  return (
+    <m.div
+      initial={{ opacity: 0, y: 8 }}
+      animate={{ opacity: 1, y: 0 }}
+      exit={{ opacity: 0, y: 8 }}
+      transition={{ duration: 0.16 }}
+      className="pointer-events-auto flex items-center gap-2.5 rounded-full border border-line-strong bg-elevated py-1.5 pr-1.5 pl-3.5 text-xs font-semibold text-fg shadow-float"
+    >
+      {icon}
+      {notice.message}
+      {notice.undo ? (
+        <button
+          type="button"
+          onClick={() => {
+            notice.undo?.();
+            onDismiss();
+          }}
+          className="rounded-full bg-chip px-3 py-1 font-bold text-accent hover:bg-hover"
+        >
+          撤销
+        </button>
+      ) : (
+        <span className="w-1.5" />
+      )}
+    </m.div>
   );
 }
 
