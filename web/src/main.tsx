@@ -1,5 +1,6 @@
 import React, { Suspense, lazy } from "react";
 import { createRoot } from "react-dom/client";
+import { platform as osPlatform } from "@tauri-apps/plugin-os";
 
 import "./styles/globals.css";
 import { Providers } from "@/components/providers/Providers";
@@ -26,6 +27,13 @@ function Routes() {
   const platform = CHANNELS[path === "//" ? "/" : path] ?? "douyu";
   // key: each channel keeps its own scroll and list state, as separate Next pages did.
   return <ChannelPage key={platform} platform={platform} />;
+}
+
+// CSS uses this to keep chrome clear of the macOS traffic lights (overlay title bar).
+try {
+  document.documentElement.dataset.os = osPlatform();
+} catch {
+  // not running inside Tauri (plain browser dev)
 }
 
 createRoot(document.getElementById("root")!).render(

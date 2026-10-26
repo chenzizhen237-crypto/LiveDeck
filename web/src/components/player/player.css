@@ -1566,6 +1566,12 @@ html.web-fs-active .danmu-panel {
   pointer-events: auto;
 }
 
+/* macOS overlay title bar: traffic lights sit at x 18–70 (tauri.conf.json), so
+   start the bar past them. */
+:root[data-os="macos"] .player-topbar {
+  left: 84px;
+}
+
 .player-topbar-left {
   display: flex;
   align-items: center;
