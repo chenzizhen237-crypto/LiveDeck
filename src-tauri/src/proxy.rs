@@ -2,7 +2,6 @@ use actix_web::{web, App, HttpRequest, HttpResponse, HttpServer, Responder};
 use bytes::Bytes;
 use futures_util::TryStreamExt;
 use reqwest::Client;
-// awc removed for now due to API differences; using reqwest streaming
 use crate::flv_relay;
 use crate::StreamUrlStore;
 use serde::Deserialize;
