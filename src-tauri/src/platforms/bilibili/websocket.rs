@@ -1,14 +1,7 @@
 // src/websocket.rs
-use native_tls::TlsStream;
 use serde_json::Value;
-use std::collections::VecDeque;
-use std::net::TcpStream;
 use std::sync::OnceLock;
-use std::time::{Duration, Instant};
-use tungstenite::{client, Message, WebSocket};
-use url::Url;
 
-use super::auth::{init_server_no_cookie, init_server_with_cookie};
 use super::models::{BiliMessage, DanmuServer, MsgHead};
 
 static DEBUG_FLAG: OnceLock<bool> = OnceLock::new();
@@ -29,238 +22,56 @@ macro_rules! ws_debug {
     }
 }
 
-pub struct BiliLiveClient {
-    ws: WebSocket<TlsStream<TcpStream>>,
-    auth_msg: String,
-    // Keep server host list for reconnection
-    host_list: Value,
-    // Heartbeat scheduling
-    last_heartbeat: Instant,
-    heartbeat_interval: Duration,
-    // Pending messages parsed from current/previous frames
-    pending: VecDeque<BiliMessage>,
+/// Messages decoded from one websocket frame.
+#[derive(Default)]
+pub struct ParsedFrame {
+    pub messages: Vec<BiliMessage>,
+    /// The server acknowledged our auth packet (op 8).
+    pub auth_reply: bool,
 }
 
-impl BiliLiveClient {
-    pub fn new_with_cookie(cookies: &str, room_id: &str) -> Self {
-        let (v, auth) = init_server_with_cookie(cookies, room_id);
-        ws_debug!("[websocket] server_info host_list: {:?}", v["host_list"]);
-        let ws = connect(v["host_list"].clone());
-        ws_debug!("[websocket] connected via cookie for room {}", room_id);
-        BiliLiveClient {
-            ws,
-            auth_msg: serde_json::to_string(&auth).unwrap(),
-            host_list: v["host_list"].clone(),
-            last_heartbeat: Instant::now(),
-            heartbeat_interval: Duration::from_secs(30),
-            pending: VecDeque::new(),
+/// Decodes one websocket frame. A frame may hold several packets, and a
+/// brotli packet (ver 3) wraps further packets. Every length is checked, so
+/// malformed input is skipped instead of panicking on a slice index.
+pub fn parse_frame(data: &[u8]) -> ParsedFrame {
+    let mut out = ParsedFrame::default();
+    parse_packets(data, &mut out, false);
+    out
+}
+
+fn parse_packets(data: &[u8], out: &mut ParsedFrame, nested: bool) {
+    let mut offset = 0usize;
+    while offset + 16 <= data.len() {
+        let h = get_msg_header(&data[offset..offset + 16]);
+        let len = h.pack_len as usize;
+        let header_len = h.raw_header_size as usize;
+        if len < 16 || header_len < 16 || header_len > len || offset + len > data.len() {
+            ws_debug!("[websocket] malformed packet at {}, dropping rest of frame", offset);
+            break;
         }
-    }
-
-    pub fn new_without_cookie(room_id: &str) -> Self {
-        let (v, auth) = init_server_no_cookie(room_id);
-        ws_debug!("[websocket] server_info host_list: {:?}", v["host_list"]);
-        let ws = connect(v["host_list"].clone());
-        ws_debug!("[websocket] connected without cookie for room {}", room_id);
-        BiliLiveClient {
-            ws,
-            auth_msg: serde_json::to_string(&auth).unwrap(),
-            host_list: v["host_list"].clone(),
-            last_heartbeat: Instant::now(),
-            heartbeat_interval: Duration::from_secs(30),
-            pending: VecDeque::new(),
+        let body = &data[offset + header_len..offset + len];
+        match h.operation {
+            5 => match h.ver {
+                3 if !nested => match decompress(body) {
+                    Ok(inner) => parse_packets(&inner, out, true),
+                    Err(e) => ws_debug!("[websocket] decompress error: {:?}", e),
+                },
+                0 | 1 => match serde_json::from_slice::<Value>(body) {
+                    Ok(json) => match {
+                        ws_debug!("[websocket] cmd={}", json["cmd"].as_str().unwrap_or("?"));
+                        handle(json)
+                    } {
+                        Some(BiliMessage::Unsupported { .. }) | None => {}
+                        Some(m) => out.messages.push(m),
+                    },
+                    Err(e) => ws_debug!("[websocket] json parse error: {:?}", e),
+                },
+                v => ws_debug!("[websocket] unsupported body ver={}, skip", v),
+            },
+            8 => out.auth_reply = true,
+            _ => {} // 3 = popularity, ignored
         }
-    }
-
-    pub fn send_auth(&mut self) {
-        let pkt = make_packet(self.auth_msg.as_str(), Operation::AUTH);
-        ws_debug!("[websocket] sending auth packet, len={}", pkt.len());
-        let _ = self.ws.send(Message::Binary(pkt));
-    }
-
-    pub fn send_heart_beat(&mut self) {
-        let pkt = make_packet("{}", Operation::HEARTBEAT);
-        ws_debug!("[websocket] sending heartbeat, len={}", pkt.len());
-        let _ = self.ws.send(Message::Binary(pkt));
-        // update heartbeat timestamp
-        self.last_heartbeat = Instant::now();
-    }
-
-    // Periodically send heartbeat to keep the connection alive
-    fn maybe_send_heartbeat(&mut self) {
-        if self.last_heartbeat.elapsed() >= self.heartbeat_interval {
-            ws_debug!("[websocket] periodic heartbeat due");
-            self.send_heart_beat();
-        }
-    }
-
-    // Try to reconnect using the cached host list, and re-authenticate
-    fn reconnect(&mut self) {
-        for attempt in 1..=2 {
-            ws_debug!("[websocket] attempting reconnect (attempt {attempt}/2)...");
-            match std::panic::catch_unwind({
-                let host_list = self.host_list.clone();
-                move || connect(host_list)
-            }) {
-                Ok(new_ws) => {
-                    self.ws = new_ws;
-                    ws_debug!(
-                        "[websocket] reconnect successful on attempt {attempt}, resending auth"
-                    );
-                    self.send_auth();
-                    return;
-                }
-                Err(_) => {
-                    ws_debug!("[websocket] reconnect attempt {attempt} failed");
-                }
-            }
-        }
-        ws_debug!("[websocket] reconnect failed after 2 attempts; will retry on next read cycle");
-    }
-
-    // Parse one frame and collect all messages into pending queue
-    pub fn parse_ws_message(&mut self, resv: Vec<u8>) -> Option<BiliMessage> {
-        ws_debug!("[websocket] parse_ws_message: total_len={}", resv.len());
-        let mut offset = 0;
-        let header = &resv[0..16];
-        let mut head_1 = get_msg_header(header);
-        ws_debug!(
-            "[websocket] header op={} ver={} pack_len={} seq={} hdr_size={}",
-            head_1.operation,
-            head_1.ver,
-            head_1.pack_len,
-            head_1.seq_id,
-            head_1.raw_header_size
-        );
-        if head_1.operation == 5 || head_1.operation == 8 {
-            loop {
-                let body: &[u8] = &resv[offset + 16..offset + (head_1.pack_len as usize)];
-                ws_debug!(
-                    "[websocket] chunk offset={} pack_len={} ver={} op={}",
-                    offset,
-                    head_1.pack_len,
-                    head_1.ver,
-                    head_1.operation
-                );
-                if let Some(msg) = self.parse_business_message(head_1, body) {
-                    // push and continue to collect more messages
-                    self.pending.push_back(msg);
-                }
-                offset += head_1.pack_len as usize;
-                if offset >= resv.len() {
-                    break;
-                }
-                let temp_head = &resv[offset..(offset + 16)];
-                head_1 = get_msg_header(temp_head);
-            }
-        } else if head_1.operation == 3 {
-            let mut body: [u8; 4] = [0, 0, 0, 0];
-            body[0] = resv[16];
-            body[1] = resv[17];
-            body[2] = resv[18];
-            body[3] = resv[19];
-            let _popularity = i32::from_be_bytes(body);
-            ws_debug!(
-                "[websocket] popularity message op=3; popularity={}",
-                _popularity
-            );
-        } else {
-            ws_debug!("[websocket] unknown op={}, ignoring", head_1.operation);
-        }
-        None
-    }
-
-    fn parse_business_message(&mut self, h: MsgHead, b: &[u8]) -> Option<BiliMessage> {
-        ws_debug!(
-            "[websocket] parse_business_message op={} ver={} body_len={} ",
-            h.operation,
-            h.ver,
-            b.len()
-        );
-        if h.operation == 5 {
-            if h.ver == 3 {
-                let res: Vec<u8> = match decompress(b) {
-                    Ok(r) => r,
-                    Err(e) => {
-                        ws_debug!("[websocket] decompress error: {:?}", e);
-                        return None;
-                    }
-                };
-                ws_debug!("[websocket] decompressed len={}", res.len());
-                return self.parse_ws_message(res);
-            } else if h.ver == 0 {
-                let s = match String::from_utf8(b.to_vec()) {
-                    Ok(s) => s,
-                    Err(e) => {
-                        ws_debug!("[websocket] utf8 error: {:?}", e);
-                        return None;
-                    }
-                };
-                ws_debug!("[websocket] ver0 business json str len={}", s.len());
-                let res_json: Value = match serde_json::from_str(s.as_str()) {
-                    Ok(v) => v,
-                    Err(e) => {
-                        ws_debug!("[websocket] json parse error: {:?}", e);
-                        return None;
-                    }
-                };
-                ws_debug!(
-                    "[websocket] business cmd={}",
-                    res_json["cmd"].as_str().unwrap_or("<unknown>")
-                );
-                if let Some(m) = handle(res_json) {
-                    // push into queue, but do not return immediately
-                    self.pending.push_back(m);
-                }
-                None
-            } else {
-                ws_debug!("[websocket] unknown compression ver={}, skip", h.ver);
-                None
-            }
-        } else if h.operation == 8 {
-            ws_debug!("[websocket] op=8 (auth reply), sending heartbeat");
-            self.send_heart_beat();
-            None
-        } else {
-            ws_debug!("[websocket] unsupported business op={}, skip", h.operation);
-            None
-        }
-    }
-
-    pub fn read_once(&mut self) -> Option<BiliMessage> {
-        // If we already have pending messages, deliver one immediately
-        if let Some(m) = self.pending.pop_front() {
-            return Some(m);
-        }
-
-        // ensure heartbeat keeps alive
-        self.maybe_send_heartbeat();
-
-        let readable = self.ws.can_read();
-        ws_debug!("[websocket] can_read={} ", readable);
-        if self.ws.can_read() {
-            let msg = self.ws.read();
-            match msg {
-                Ok(m) => {
-                    let res = m.into_data();
-                    ws_debug!("[websocket] read frame bytes={} ", res.len());
-                    if res.len() >= 16 {
-                        // parse and fill pending queue
-                        let _ = self.parse_ws_message(res);
-                        // return one
-                        return self.pending.pop_front();
-                    } else {
-                        ws_debug!("[websocket] frame too short (<16), ignore");
-                    }
-                }
-                Err(e) => {
-                    ws_debug!("[websocket] read error: {:?}", e);
-                    // try to reconnect on read error
-                    self.reconnect();
-                }
-            }
-        }
-        None
+        offset += len;
     }
 }
 
@@ -299,34 +110,6 @@ pub fn gen_damu_list(list: &serde_json::Value) -> Vec<DanmuServer> {
         res.push(DanmuServer::default());
     }
     res
-}
-
-fn find_server(vd: Vec<DanmuServer>) -> (String, String, String) {
-    let (host, wss_port) = (vd.get(0).unwrap().host.clone(), vd.get(0).unwrap().wss_port);
-    ws_debug!(
-        "[websocket] choose server host={} wss_port={}",
-        host,
-        wss_port
-    );
-    (
-        host.clone(),
-        format!("{}:{}", host.clone(), wss_port),
-        format!("wss://{}:{}/sub", host, wss_port),
-    )
-}
-
-pub fn connect(v: Value) -> WebSocket<TlsStream<TcpStream>> {
-    let danmu_server = gen_damu_list(&v);
-    let (host, url, ws_url) = find_server(danmu_server);
-    ws_debug!("[websocket] connecting tcp {} and ws {}", url, ws_url);
-    let connector: native_tls::TlsConnector = native_tls::TlsConnector::new().unwrap();
-    let stream: TcpStream = TcpStream::connect(url).unwrap();
-    let stream: native_tls::TlsStream<TcpStream> =
-        connector.connect(host.as_str(), stream).unwrap();
-    let (socket, _resp) =
-        client(Url::parse(ws_url.as_str()).unwrap(), stream).expect("Can't connect");
-    ws_debug!("[websocket] websocket handshake complete");
-    socket
 }
 
 pub enum Operation {
@@ -421,5 +204,50 @@ pub fn handle(json: Value) -> Option<BiliMessage> {
         _ => Some(BiliMessage::Unsupported {
             cmd: category.to_string(),
         }),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn packet(op: u32, ver: u16, body: &[u8]) -> Vec<u8> {
+        let mut p = ((16 + body.len()) as u32).to_be_bytes().to_vec();
+        p.extend_from_slice(&16u16.to_be_bytes());
+        p.extend_from_slice(&ver.to_be_bytes());
+        p.extend_from_slice(&op.to_be_bytes());
+        p.extend_from_slice(&1u32.to_be_bytes());
+        p.extend_from_slice(body);
+        p
+    }
+
+    fn danmu(text: &str) -> Vec<u8> {
+        let json = serde_json::json!({"cmd": "DANMU_MSG", "info": [[], text, [1, "user"]]});
+        packet(5, 0, json.to_string().as_bytes())
+    }
+
+    #[test]
+    fn parses_every_packet_in_a_frame() {
+        let mut frame = Vec::new();
+        for i in 0..50 {
+            frame.extend(danmu(&format!("m{i}")));
+        }
+        frame.extend(packet(5, 0, br#"{"cmd":"ONLINE_RANK_COUNT"}"#));
+        frame.extend(packet(8, 1, b"{}"));
+        let parsed = parse_frame(&frame);
+        assert_eq!(parsed.messages.len(), 50, "all danmaku in one frame are delivered at once");
+        assert!(parsed.auth_reply);
+    }
+
+    #[test]
+    fn malformed_frames_do_not_panic() {
+        assert!(parse_frame(&[]).messages.is_empty());
+        assert!(parse_frame(&[0u8; 10]).messages.is_empty());
+        let mut bad = danmu("ok");
+        bad.extend_from_slice(&[0, 0, 0xff, 0xff, 0, 16, 0, 0, 0, 0, 0, 5, 0, 0, 0, 1]); // length past end
+        assert_eq!(parse_frame(&bad).messages.len(), 1);
+        let mut tiny = packet(5, 0, b"");
+        tiny[3] = 4; // pack_len shorter than the header
+        assert!(parse_frame(&tiny).messages.is_empty());
     }
 }

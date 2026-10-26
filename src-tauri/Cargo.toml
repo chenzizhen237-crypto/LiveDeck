@@ -32,7 +32,6 @@ window-vibrancy = "0.7.1"
  tokio-tungstenite = { version = "0.20", features = ["native-tls"] }
  url = "2.4"
  openssl-sys = { version = "0.9", features = ["vendored"] }
- native-tls = "0.2"
  rand = "0.8"
  futures-util = "0.3"
  urlencoding = "2.1.0"
@@ -62,7 +61,6 @@ anyhow = "1.0"
  
  specta = { version = "2.0.0-rc.9", features = ["serde", "derive", "function"] }
  tauri-plugin-os = "2.3.0"
- tungstenite = { version = "0.21", features = ["native-tls"] }
  brotlic = "0.8"
  cookie = "0.18"
  html-escape = "0.2"
