@@ -1,4 +1,4 @@
-use deno_core::{JsRuntime, RuntimeOptions};
+use crate::js_worker::{self, JsWorker};
 use html_escape::decode_html_entities;
 use reqwest::{
     header::{HeaderMap, HeaderValue},
@@ -7,8 +7,6 @@ use reqwest::{
 };
 use serde::Deserialize;
 use serde_json::Value;
-#[cfg(target_os = "linux")]
-use std::sync::Once;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 #[derive(Deserialize, Debug)]
@@ -62,14 +60,24 @@ const DEFAULT_DOUYU_UA: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleW
 const DEFAULT_DOUYU_DID: &str = "10000000000000000000000000001501";
 const CRYPTO_JS: &str = include_str!("cryptojs.min.js");
 
-#[cfg(target_os = "linux")]
-static JS_RUNTIME_INIT: Once = Once::new();
+/// One isolate for Douyu signing with CryptoJS preloaded (upstream built a new one per request).
+fn sign_worker() -> &'static JsWorker {
+    static WORKER: std::sync::OnceLock<JsWorker> = std::sync::OnceLock::new();
+    WORKER.get_or_init(|| {
+        JsWorker::spawn("douyu-js", |rt| {
+            js_worker::exec(rt, "[douyu-cryptojs]", CRYPTO_JS.to_string()).map(|_| ())
+        })
+    })
+}
 
-fn ensure_js_runtime_platform_initialized() {
-    #[cfg(target_os = "linux")]
-    JS_RUNTIME_INIT.call_once(|| {
-        JsRuntime::init_platform(None);
-    });
+/// Wraps the room's sign script in a function scope, so its declarations don't
+/// leak into (or collide with) the shared global scope between requests.
+fn douyu_sign_call(script: &str, rid: &str, did: &str, ts: i64) -> Result<String, serde_json::Error> {
+    let rid_js = serde_json::to_string(rid)?;
+    let did_js = serde_json::to_string(did)?;
+    Ok(format!(
+        "(function () {{\n{script}\n;return String(ub98484234({rid_js},{did_js},{ts}));\n}})()"
+    ))
 }
 
 fn normalize_douyu_cdn(input: Option<&str>) -> &'static str {
@@ -118,27 +126,10 @@ impl DouYu {
         did: &str,
         ts: i64,
     ) -> Result<String, Box<dyn std::error::Error>> {
-        ensure_js_runtime_platform_initialized();
-        let mut runtime = JsRuntime::new(RuntimeOptions::default());
-
-        runtime.execute_script(
-            "[douyu]",
-            deno_core::FastString::from(String::from(CRYPTO_JS)),
-        )?;
-        runtime.execute_script("[douyu]", deno_core::FastString::from(script.to_string()))?;
-
-        let rid_js = serde_json::to_string(rid)?;
-        let did_js = serde_json::to_string(did)?;
-        let call_expr = format!("ub98484234({rid_js},{did_js},{ts});");
-        let js_result =
-            runtime.execute_script("[douyu]", deno_core::FastString::from(call_expr))?;
-
-        let params = {
-            let scope = &mut runtime.handle_scope();
-            let result = js_result.open(scope);
-            result.to_rust_string_lossy(scope)
-        };
-
+        let call = douyu_sign_call(script, rid, did, ts)?;
+        let params = sign_worker()
+            .run(move |rt| js_worker::exec_string(rt, "[douyu]", call))
+            .await?;
         Ok(params)
     }
 
@@ -511,4 +502,32 @@ pub async fn get_stream_url_with_quality(
     let douyu = DouYu::new(room_id).await?;
     let url = douyu.get_real_url_with_quality(quality, cdn).await?;
     Ok(url)
+}
+
+#[cfg(test)]
+mod sign_tests {
+    use super::*;
+
+    // Douyu's real scripts change often; this stands in with top-level `const`
+    // and `function` declarations, which would collide if they hit global scope twice.
+    const FAKE_SIGN_SCRIPT: &str = r#"
+        const salt = "x";
+        function ub98484234(rid, did, ts) {
+            return "v=" + CryptoJS.MD5(rid + did + ts + salt).toString() + "&rid=" + rid;
+        }
+    "#;
+
+    #[test]
+    fn sign_script_runs_repeatedly_on_the_shared_runtime() {
+        tauri::async_runtime::block_on(async {
+            for ts in [1_i64, 2, 3] {
+                let call = douyu_sign_call(FAKE_SIGN_SCRIPT, "9999", "did", ts).unwrap();
+                let out = sign_worker()
+                    .run(move |rt| js_worker::exec_string(rt, "[douyu]", call))
+                    .await
+                    .unwrap();
+                assert!(out.starts_with("v=") && out.ends_with("&rid=9999"), "{out}");
+            }
+        });
+    }
 }

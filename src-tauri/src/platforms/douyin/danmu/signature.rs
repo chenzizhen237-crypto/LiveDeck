@@ -1,23 +1,31 @@
-use deno_core::{FastString, JsRuntime, RuntimeOptions};
-use log::{debug, error};
+use crate::js_worker::{self, JsWorker};
+use log::debug;
 use md5::{Digest, Md5};
 use rand::Rng;
 use std::collections::HashMap;
-#[cfg(target_os = "linux")]
-use std::sync::Once;
 use url::Url;
 
 // Load sign.js content at compile time
 const SIGN_JS_CONTENT: &str = include_str!("./sign.js");
 
-#[cfg(target_os = "linux")]
-static JS_RUNTIME_INIT: Once = Once::new();
+const BOOTSTRAP_JS: &str = r#"
+    globalThis.window = globalThis;
+    globalThis.self = globalThis;
+    globalThis.document = {};
+    globalThis.navigator = {
+        userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    };
+"#;
 
-fn ensure_js_runtime_platform_initialized() {
-    #[cfg(target_os = "linux")]
-    JS_RUNTIME_INIT.call_once(|| {
-        JsRuntime::init_platform(None);
-    });
+/// One isolate with sign.js loaded once (upstream rebuilt it on every connect).
+fn sign_worker() -> &'static JsWorker {
+    static WORKER: std::sync::OnceLock<JsWorker> = std::sync::OnceLock::new();
+    WORKER.get_or_init(|| {
+        JsWorker::spawn("douyin-js", |rt| {
+            js_worker::exec(rt, "[bootstrap]", BOOTSTRAP_JS.to_string())?;
+            js_worker::exec(rt, "./sign.js", SIGN_JS_CONTENT.to_string()).map(|_| ())
+        })
+    })
 }
 
 pub async fn generate_signature(
@@ -62,55 +70,12 @@ pub async fn generate_signature(
     let md5_param = format!("{:x}", digest_bytes);
     debug!("[Douyin Danmaku] MD5 param for signature: {}", md5_param);
 
-    ensure_js_runtime_platform_initialized();
-    let mut runtime = JsRuntime::new(RuntimeOptions::default());
-
-    let bootstrap_script = r#"
-        globalThis.window = globalThis;
-        globalThis.self = globalThis;
-        globalThis.document = {}; 
-        globalThis.navigator = {
-            userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-        };
-    "#;
-    runtime
-        .execute_script("[bootstrap]", FastString::from_static(bootstrap_script))
-        .map_err(|e| {
-            error!("[Douyin Danmaku] Error during deno_core bootstrap script: {}", e);
-            e
-        })?;
-
-    // Use the embedded sign.js content
-    runtime
-        .execute_script("./sign.js", FastString::from_static(SIGN_JS_CONTENT))
-        .map_err(|e| {
-            error!("[Douyin Danmaku] Error during deno_core eval of sign.js: {}", e);
-            e
-        })?;
-
     let call_script = format!("get_sign('{}')", md5_param);
-    // For dynamic strings, convert to String first, then into FastString
-    let fast_call_script = FastString::from(call_script);
-    let result = runtime
-        .execute_script("[call_get_sign]", fast_call_script)
-        .map_err(|e| {
-            error!("[Douyin Danmaku] Error during deno_core call to get_sign: {}", e);
-            e
-        })?;
-
-    let scope = &mut runtime.handle_scope();
-    let local_value = deno_core::v8::Local::new(scope, result);
-
-    if local_value.is_string() {
-        let signature = local_value.to_rust_string_lossy(scope);
-        debug!("[Douyin Danmaku] Final signature computed.");
-        Ok(signature)
-    } else {
-        Err(
-            Box::from("get_sign did not return a string value from deno_core")
-                as Box<dyn std::error::Error + Send + Sync>,
-        )
-    }
+    let signature = sign_worker()
+        .run(move |rt| js_worker::exec_string(rt, "[call_get_sign]", call_script))
+        .await?;
+    debug!("[Douyin Danmaku] Final signature computed.");
+    Ok(signature)
 }
 
 pub fn generate_ms_token(length: usize) -> String {
@@ -136,3 +101,21 @@ pub fn generate_douyin_ms_token() -> String {
 //     // ... (implementation from demo if required)
 //     unimplemented!();
 // }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn signature_works_repeatedly_on_the_shared_runtime() {
+        let url = "wss://webcast.example/webcast/im/push/v2/?live_id=1&aid=6383&room_id=42&user_unique_id=7";
+        tauri::async_runtime::block_on(async {
+            // sign.js mixes in the current time, so values differ call to call
+            // (also with a fresh runtime per call, as upstream did); check the shape.
+            for _ in 0..3 {
+                let sig = generate_signature(url).await.unwrap();
+                assert_eq!(sig.len(), 16, "{sig}");
+            }
+        });
+    }
+}

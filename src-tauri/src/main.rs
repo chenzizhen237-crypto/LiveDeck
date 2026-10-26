@@ -13,6 +13,7 @@ use tauri_plugin_opener::OpenerExt;
 mod logging;
 mod config_transfer;
 mod flv_relay;
+mod js_worker;
 mod lan_sync;
 mod sync_transfer;
 mod platforms;
