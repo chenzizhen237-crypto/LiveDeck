@@ -17,7 +17,9 @@ runs:
           [ -d "$p" ] && echo "$p" >> "$GITHUB_PATH"
           export PATH="$p:$PATH"
         done
-        if command -v fnm >/dev/null; then
+        # Jimmy's runners already have an fnm Node on PATH (their .path) and an isolated HOME, so only
+        # fall back to fnm when node/pnpm are missing (it would otherwise re-download Node into HOME).
+        if ! { command -v node && command -v pnpm; } >/dev/null && command -v fnm >/dev/null; then
           fnm install "${{ inputs.node-version }}" >/dev/null 2>&1 || true
           node_bin="$(dirname "$(fnm exec --using="${{ inputs.node-version }}" -- which node)")"
           echo "$node_bin" >> "$GITHUB_PATH"
