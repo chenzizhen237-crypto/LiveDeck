@@ -1,7 +1,7 @@
 "use client";
 
-import { DouyuHomePage } from "@/screens/DouyuHomePage";
+import { ChannelPage } from "@/components/livedeck/ChannelPage";
 
 export default function Page() {
-  return <DouyuHomePage />;
+  return <ChannelPage platform="douyu" />;
 }

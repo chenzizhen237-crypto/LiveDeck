@@ -1,0 +1,140 @@
+/*
+ * LiveDeck design tokens — Midnight palette.
+ * Mirrors the semantic variables in LiveDeck/LiveDeck UI.nib (Foundations page).
+ * Prefixed --ld- so they don't collide with the legacy player CSS, which still
+ * reads the unprefixed upstream variables.
+ */
+
+@theme {
+  --color-app: var(--ld-bg-app);
+  --color-surface: var(--ld-bg-surface);
+  --color-raised: var(--ld-bg-raised);
+  --color-elevated: var(--ld-bg-elevated);
+  --color-glass: var(--ld-bg-glass);
+  --color-chip: var(--ld-bg-chip);
+  --color-hover: var(--ld-bg-hover);
+  --color-selected: var(--ld-bg-selected);
+  --color-scrim: var(--ld-bg-scrim);
+
+  --color-line: var(--ld-border-subtle);
+  --color-line-strong: var(--ld-border-strong);
+  --color-focus: var(--ld-border-focus);
+
+  --color-fg: var(--ld-text-primary);
+  --color-fg-2: var(--ld-text-secondary);
+  --color-fg-3: var(--ld-text-muted);
+  --color-on-accent: var(--ld-text-on-accent);
+
+  --color-accent: var(--ld-accent);
+  --color-accent-soft: var(--ld-accent-soft);
+
+  --color-live: var(--ld-status-live);
+  --color-online: var(--ld-status-online);
+  --color-replay: var(--ld-status-replay);
+  --color-offline: var(--ld-text-muted);
+
+  --color-douyu: #ff7a1a;
+  --color-huya: #ffa200;
+  --color-douyin: #fe2c55;
+  --color-bilibili: #fb7299;
+
+  --shadow-float: 0 6px 20px var(--ld-shadow);
+  --shadow-pop: 0 16px 40px var(--ld-shadow);
+
+  --ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+:root {
+  --ld-bg-app: #f4f6fa;
+  --ld-bg-app-clear: #f4f6fa00;
+  --ld-bg-surface: #ffffff;
+  --ld-bg-raised: #eef1f7;
+  --ld-bg-elevated: #fffffff2;
+  --ld-bg-glass: #ffffffc7;
+  --ld-bg-chip: #e6eaf2;
+  --ld-bg-hover: #0b10200d;
+  --ld-bg-selected: #0fa9cc1f;
+  --ld-bg-scrim: #0b102040;
+  --ld-border-subtle: #e3e7ef;
+  --ld-border-strong: #cfd6e3;
+  --ld-border-focus: #0fa9cc;
+  --ld-text-primary: #0e1424;
+  --ld-text-secondary: #48526a;
+  --ld-text-muted: #8a93a8;
+  --ld-text-on-accent: #ffffff;
+  --ld-accent: #0fa9cc;
+  --ld-accent-soft: #0fa9cc1f;
+  --ld-status-live: #ff3d5a;
+  --ld-status-online: #16a34a;
+  --ld-status-replay: #d97706;
+  --ld-shadow: #0e14241a;
+}
+
+[data-theme="dark"] {
+  --ld-bg-app: #0e1322;
+  --ld-bg-app-clear: #0e132200;
+  --ld-bg-surface: #151b2d;
+  --ld-bg-raised: #1b2236;
+  --ld-bg-elevated: #1d2539f5;
+  --ld-bg-glass: #1a2133d1;
+  --ld-bg-chip: #232b42;
+  --ld-bg-hover: #ffffff0d;
+  --ld-bg-selected: #3dd9f526;
+  --ld-bg-scrim: #05081099;
+  --ld-border-subtle: #ffffff12;
+  --ld-border-strong: #ffffff1f;
+  --ld-border-focus: #3dd9f5;
+  --ld-text-primary: #eef2fa;
+  --ld-text-secondary: #a8b2c8;
+  --ld-text-muted: #6e7891;
+  --ld-text-on-accent: #04121a;
+  --ld-accent: #3dd9f5;
+  --ld-accent-soft: #3dd9f524;
+  --ld-status-live: #ff5c72;
+  --ld-status-online: #4ade80;
+  --ld-status-replay: #fbbf24;
+  --ld-shadow: #00000059;
+}
+
+.ld-root {
+  background: var(--ld-bg-app);
+  color: var(--ld-text-primary);
+}
+
+.ld-scrollbar-none::-webkit-scrollbar {
+  display: none;
+}
+.ld-scrollbar-none {
+  scrollbar-width: none;
+}
+
+@keyframes ld-eq {
+  0%,
+  100% {
+    transform: scaleY(0.4);
+  }
+  50% {
+    transform: scaleY(1);
+  }
+}
+
+@keyframes ld-shimmer {
+  0% {
+    background-position: -200% 0;
+  }
+  100% {
+    background-position: 200% 0;
+  }
+}
+
+.ld-skeleton {
+  background: linear-gradient(90deg, var(--ld-bg-chip) 25%, var(--ld-bg-raised) 50%, var(--ld-bg-chip) 75%);
+  background-size: 200% 100%;
+  animation: ld-shimmer 1.2s linear infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ld-skeleton {
+    animation: none;
+  }
+}

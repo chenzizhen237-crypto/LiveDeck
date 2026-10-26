@@ -1,207 +1,109 @@
 "use client";
 
-import React, { useCallback, useEffect, useMemo, useState, useTransition } from "react";
+// LiveDeck shell: no sidebar or navbar. The floating island handles platform,
+// category, search and open rooms; the follow trigger sits top-right; the
+// player opens as a full-window overlay underneath the island.
+
+import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
-import { AnimatePresence, m } from "framer-motion";
-import { Spinner } from "@heroui/react";
+import { AnimatePresence } from "framer-motion";
 
-import styles from "./AppShell.module.css";
-import { Sidebar } from "@/components/shell/Sidebar";
-import { Navbar } from "@/components/shell/Navbar";
-import { useTheme } from "@/state/theme/ThemeProvider";
-import { usePlayerUi } from "@/state/playerUi/PlayerUiProvider";
-import { useCustomCategories } from "@/state/customCategories/CustomCategoriesProvider";
+import { DynamicIsland } from "@/components/livedeck/DynamicIsland";
+import { FollowTrigger } from "@/components/livedeck/FollowPopover";
+import { CategoryPopover } from "@/components/livedeck/CategoryPopover";
+import { SearchModal } from "@/components/livedeck/SearchModal";
 import { PlayerOverlayHost, PlayerOverlayProvider, usePlayerOverlay } from "@/state/playerOverlay/PlayerOverlayProvider";
+import { useCategories, type CategoryItem, type UiPlatform } from "@/state/category/CategoryProvider";
 
-type UiPlatform = "douyu" | "douyin" | "huya" | "bilibili" | "custom";
+const ROUTES: Record<UiPlatform, string> = { douyu: "/", douyin: "/douyin/", huya: "/huya/", bilibili: "/bilibili/" };
 
-function normalizePathname(pathname: string) {
-  const raw = String(pathname || "/");
-  if (raw === "/") return "/";
-  return raw.replace(/\/+$/, "");
-}
-
-function getActivePlatform(pathname: string): UiPlatform {
-  const p = normalizePathname(pathname);
-  if (p.startsWith("/custom")) return "custom";
-  if (p.startsWith("/douyin")) return "douyin";
-  if (p.startsWith("/huya")) return "huya";
-  if (p.startsWith("/bilibili")) return "bilibili";
+function platformFromPath(pathname: string): UiPlatform {
+  if (pathname.startsWith("/douyin")) return "douyin";
+  if (pathname.startsWith("/huya")) return "huya";
+  if (pathname.startsWith("/bilibili")) return "bilibili";
   return "douyu";
 }
 
-function isPlayerPath(pathname: string) {
-  return normalizePathname(pathname).startsWith("/player");
-}
+/** Lets the page report scroll so the island can switch to its compact state. */
+const ShellScrollContext = createContext<(top: number) => void>(() => {});
+export const useShellScroll = () => useContext(ShellScrollContext);
 
 export function AppShell({ children }: { children: React.ReactNode }) {
   return (
     <PlayerOverlayProvider>
-      <AppShellInner>{children}</AppShellInner>
+      <Shell>{children}</Shell>
     </PlayerOverlayProvider>
   );
 }
 
-function AppShellInner({ children }: { children: React.ReactNode }) {
+function Shell({ children }: { children: React.ReactNode }) {
   const router = useRouter();
-  const pathname = usePathname();
-  const { effectiveTheme, toggleLightDark } = useTheme();
-  const { isFullscreen: isPlayerFullscreen } = usePlayerUi();
-  const playerOverlay = usePlayerOverlay();
-  const custom = useCustomCategories();
-  const [hydrated, setHydrated] = useState(false);
-  const [isRoutePending, startRouteTransition] = useTransition();
+  const pathname = usePathname() ?? "/";
+  const overlay = usePlayerOverlay();
+  const categories = useCategories();
+  const platform = platformFromPath(pathname);
+  const [scrolled, setScrolled] = useState(false);
+  const [panel, setPanel] = useState<"categories" | "search" | null>(null);
 
-  const normalizedPathname = useMemo(() => normalizePathname(pathname ?? "/"), [pathname]);
-  const activePlatform = useMemo(() => getActivePlatform(normalizedPathname), [normalizedPathname]);
-  const [isSidebarCollapsed] = useState(false);
-  const [optimisticPlatform, setOptimisticPlatform] = useState<UiPlatform>(activePlatform);
+  const onScroll = useCallback((top: number) => setScrolled(top > 120), []);
+  useEffect(() => setScrolled(false), [platform]);
 
-  const playerActive = isPlayerPath(normalizedPathname) || playerOverlay.isOpen;
-  const shouldHidePlayerChrome = playerActive && isPlayerFullscreen;
-  const playerRoute = isPlayerPath(normalizedPathname);
-  // 避免 `/huya` vs `/huya/` 这种规范化抖动导致的重复挂载/重复请求
-
+  // ⌘K / Ctrl+K opens search from anywhere.
   useEffect(() => {
-    setHydrated(true);
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
+        e.preventDefault();
+        setPanel((p) => (p === "search" ? null : "search"));
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
   }, []);
 
-  useEffect(() => {
-    setOptimisticPlatform(activePlatform);
-  }, [activePlatform]);
-
-  useEffect(() => {
-    if (!custom.hydrated) return;
-
-    // 自定义分区：无数据则不显示（避免进入空白页）
-    if (normalizedPathname.startsWith("/custom") && custom.entries.length === 0) {
-      router.replace("/");
-      return;
-    }
-
-    // 仅在本次启动首次落到首页时：如果订阅了分区，默认进入自定义分区页
-    if (custom.entries.length > 0 && normalizedPathname === "/") {
-      try {
-        const key = "dtv_initial_route_custom_v1";
-        if (window.sessionStorage.getItem(key) === "1") return;
-        window.sessionStorage.setItem(key, "1");
-      } catch {
-        // ignore
-      }
-      router.replace("/custom/");
-    }
-  }, [custom.entries.length, custom.hydrated, normalizedPathname, router]);
-
-  const navigatePlatform = useCallback(
+  const goPlatform = useCallback(
     (p: UiPlatform) => {
-      const map: Record<UiPlatform, string> = {
-        douyu: "/",
-        douyin: "/douyin/",
-        huya: "/huya/",
-        bilibili: "/bilibili/",
-        custom: "/custom/"
-      };
-
-      const next = map[p];
-      if (!next) return;
-
-      setOptimisticPlatform(p);
-      startRouteTransition(() => {
-        if (isPlayerPath(pathname ?? "/")) router.replace(next);
-        else router.push(next);
-      });
+      if (overlay.isOpen) overlay.closePlayer();
+      if (p !== platform) router.push(ROUTES[p]);
     },
-    [pathname, router]
+    [overlay, platform, router]
   );
 
-  useEffect(() => {
-    if (!hydrated) return;
-    // Preload route chunks so tab switching is instant after first paint.
-    // Ignore errors (non-next runtime, prefetch not supported, etc.).
-    try {
-      void router.prefetch("/");
-      void router.prefetch("/douyin/");
-      void router.prefetch("/huya/");
-      void router.prefetch("/bilibili/");
-      if (custom.hydrated && custom.entries.length > 0) void router.prefetch("/custom/");
-    } catch {
-      // ignore
-    }
-  }, [custom.entries.length, custom.hydrated, hydrated, router]);
+  const pickCategory = useCallback(
+    (p: UiPlatform, item: CategoryItem) => {
+      categories.select(p, item);
+      setPanel(null);
+      goPlatform(p);
+    },
+    [categories, goPlatform]
+  );
 
-  const showRoutePending = optimisticPlatform !== activePlatform || isRoutePending;
+  const scrollCtx = useMemo(() => onScroll, [onScroll]);
 
   return (
-    <div className={styles.appShell}>
-      {!shouldHidePlayerChrome ? (
-        <Sidebar isCollapsed={isSidebarCollapsed} />
-      ) : null}
-      <div className={styles.appMain}>
-        {!shouldHidePlayerChrome ? (
-          <Navbar
-            theme={effectiveTheme}
-            activePlatform={optimisticPlatform}
-            onThemeToggle={toggleLightDark}
-            onPlatformChange={navigatePlatform}
-          />
-        ) : null}
+    <div className="ld-root fixed inset-0 overflow-hidden font-sans">
+      {/* macOS overlay title bar: keep the top strip draggable */}
+      <div className="fixed inset-x-0 top-0 z-[550] h-7" data-tauri-drag-region />
 
-        {hydrated ? (
-          <m.main className={`${styles.appBody} ${playerRoute ? styles.appBodyPlayer : ""}`}>
-            <div className={styles.appBodyContents}>
-              <div className={styles.routeScope}>
-                <div className={styles.routePendingWrap}>
-                  <div
-                    className={`${styles.routePendingContents} ${showRoutePending ? styles.routePendingContentsHidden : ""}`}
-                    aria-hidden={showRoutePending}
-                  >
-                    <div className={styles.routeContents}>
-                      {playerRoute ? (
-                        <AnimatePresence mode="wait" initial={false}>
-                          <m.div
-                            key={normalizedPathname}
-                            initial={{ opacity: 0, y: 6 }}
-                            animate={{ opacity: 1, y: 0 }}
-                            exit={{ opacity: 0, y: -4 }}
-                            transition={{ duration: 0.18, ease: [0.16, 1, 0.3, 1] }}
-                            style={{ flex: 1, minHeight: 0 }}
-                          >
-                            {children}
-                          </m.div>
-                        </AnimatePresence>
-                      ) : (
-                        children
-                      )}
-                    </div>
-                  </div>
-                  {showRoutePending ? (
-                    <div className={styles.routePendingOverlay} data-tauri-drag-region="false">
-                      <button type="button" className={styles.routePendingButton} disabled aria-label="正在加载">
-                        <Spinner size="lg" />
-                      </button>
-                    </div>
-                  ) : null}
-                </div>
-              </div>
-            </div>
-          </m.main>
-        ) : (
-          <AnimatePresence mode="wait" initial={false}>
-            <m.main
-              key={normalizedPathname}
-              className={`${styles.appBody} ${playerRoute ? styles.appBodyPlayer : ""}`}
-              initial={{ opacity: 0, y: 6 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -4 }}
-              transition={{ duration: 0.18, ease: [0.16, 1, 0.3, 1] }}
-            >
-              {children}
-            </m.main>
-          </AnimatePresence>
-        )}
+      <ShellScrollContext.Provider value={scrollCtx}>
+        <main className="h-full">{children}</main>
+      </ShellScrollContext.Provider>
 
-        <PlayerOverlayHost />
-      </div>
+      <PlayerOverlayHost />
+
+      <DynamicIsland
+        platform={platform}
+        compact={scrolled}
+        playerOpen={overlay.isOpen}
+        onPlatformChange={goPlatform}
+        onOpenCategories={() => setPanel("categories")}
+        onOpenSearch={() => setPanel("search")}
+      />
+      {!overlay.isOpen ? <FollowTrigger /> : null}
+
+      <AnimatePresence>
+        {panel === "categories" ? <CategoryPopover key="cat" platform={platform} onClose={() => setPanel(null)} onPick={pickCategory} /> : null}
+        {panel === "search" ? <SearchModal key="search" onClose={() => setPanel(null)} onPickCategory={pickCategory} /> : null}
+      </AnimatePresence>
     </div>
   );
 }

@@ -1,7 +1,7 @@
 "use client";
 
-import { BilibiliHomePage } from "@/screens/BilibiliHomePage";
+import { ChannelPage } from "@/components/livedeck/ChannelPage";
 
 export default function Page() {
-  return <BilibiliHomePage />;
+  return <ChannelPage platform="bilibili" />;
 }

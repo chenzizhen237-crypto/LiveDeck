@@ -1,7 +1,7 @@
 "use client";
 
-import { HuyaHomePage } from "@/screens/HuyaHomePage";
+import { ChannelPage } from "@/components/livedeck/ChannelPage";
 
 export default function Page() {
-  return <HuyaHomePage />;
+  return <ChannelPage platform="huya" />;
 }
