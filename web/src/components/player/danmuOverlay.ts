@@ -10,6 +10,12 @@
 //   • elements are pooled and reused.
 // Hovering a bullet pauses only that bullet's animation and shows an action
 // tooltip; its position comes from the animation clock, not from layout.
+//
+// Lane math assumes animations advance with performance.now(). When the
+// window is hidden or occluded (another Space, a full-screen app) WebKit stops
+// running frames while the clock and incoming danmaku keep going, so every
+// lane looked free and bullets piled up frozen at the right edge. A frame
+// heartbeat gates spawning, and a long frame gap clears the stage on return.
 
 import type Player from 'xgplayer';
 
@@ -21,6 +27,10 @@ const clamp = (value: number, min: number, max: number) => Math.max(min, Math.mi
 const LANE_GAP_PX = 24; // min horizontal gap between bullets in a lane
 const POOL_MAX = 160;
 const HOVER_RESUME_DELAY_MS = 180;
+/** No frame for this long: the page isn't animating, so don't spawn bullets. */
+const FRAME_STALL_MS = 250;
+/** Frames came back after a gap this long: on-screen bullets are stale. */
+const FRAME_GAP_CLEAR_MS = 1000;
 
 const parseFontSizePx = (fontSize: string | number | undefined) => {
   const parsed = parseInt(String(fontSize ?? ''), 10);
@@ -148,6 +158,10 @@ export function createEngine(host: HTMLElement, danmuSettings: DanmuUserSettings
   };
 
   const release = (b: Bullet) => {
+    if (hovered === b) {
+      hovered = null;
+      tip.classList.remove('is-open');
+    }
     live.delete(b);
     if (lanes[b.lane] === b) lanes[b.lane] = null;
     b.anim?.cancel();
@@ -174,8 +188,28 @@ export function createEngine(host: HTMLElement, danmuSettings: DanmuUserSettings
     return headAtExit >= LANE_GAP_PX;
   };
 
+  // ---- frame heartbeat ----
+  let lastFrame = performance.now();
+  let rafId = 0;
+  const clearAll = () => [...live].forEach(release);
+  const tick = (t: number) => {
+    if (t - lastFrame > FRAME_GAP_CLEAR_MS) clearAll();
+    lastFrame = t;
+    rafId = requestAnimationFrame(tick);
+  };
+  rafId = requestAnimationFrame(tick);
+  const isAnimating = () =>
+    document.visibilityState !== 'hidden' && performance.now() - lastFrame < FRAME_STALL_MS;
+  const onVisibility = () => {
+    if (document.visibilityState === 'hidden') clearAll();
+    // Restart the gap measurement so the first frame back isn't counted as a stall.
+    else lastFrame = performance.now();
+  };
+  document.addEventListener('visibilitychange', onVisibility);
+
   const send: NonNullable<DanmuOverlayInstance['sendComment']> = (comment) => {
-    if (!enabled || !comment.txt) return;
+    // Dropped like overflow in a busy room: nothing is queued while hidden.
+    if (!enabled || !comment.txt || !isAnimating()) return;
     const text = String(comment.txt);
     const w = Math.ceil(measureCtx.measureText(text).width) + 8;
     const now = performance.now();
@@ -319,7 +353,7 @@ export function createEngine(host: HTMLElement, danmuSettings: DanmuUserSettings
 
   const overlay: EngineOverlay = {
     sendComment: send,
-    clear: () => [...live].forEach(release),
+    clear: clearAll,
     play: () => {
       enabled = true;
       stage.hidden = false;
@@ -358,6 +392,8 @@ export function createEngine(host: HTMLElement, danmuSettings: DanmuUserSettings
     setStrokeColor: (color) => host.style.setProperty('--danmu-stroke-color', color),
     destroy: () => {
       ro.disconnect();
+      cancelAnimationFrame(rafId);
+      document.removeEventListener('visibilitychange', onVisibility);
       [...live].forEach(release);
       host.innerHTML = '';
     },
