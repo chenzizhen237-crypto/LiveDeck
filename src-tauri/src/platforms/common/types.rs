@@ -89,15 +89,47 @@ impl<T> DanmakuSessions<T> {
     }
 }
 
+// Tauri keys managed state by type, so each platform needs its own type
+// (plain aliases of one DanmakuSessions<T> would collide and panic at startup).
+macro_rules! danmaku_state {
+    ($name:ident, $handle:ty) => {
+        #[derive(Default)]
+        pub struct $name(DanmakuSessions<$handle>);
+
+        impl std::ops::Deref for $name {
+            type Target = DanmakuSessions<$handle>;
+            fn deref(&self) -> &Self::Target {
+                &self.0
+            }
+        }
+    };
+}
+
 type StopTx = tokio::sync::mpsc::Sender<()>;
-pub type DouyinDanmakuState = DanmakuSessions<StopTx>;
-pub type BilibiliDanmakuState = DanmakuSessions<StopTx>;
-pub type HuyaDanmakuState = DanmakuSessions<StopTx>;
-pub type DouyuDanmakuState = DanmakuSessions<tokio::sync::oneshot::Sender<()>>;
+danmaku_state!(DouyinDanmakuState, StopTx);
+danmaku_state!(BilibiliDanmakuState, StopTx);
+danmaku_state!(HuyaDanmakuState, StopTx);
+danmaku_state!(DouyuDanmakuState, tokio::sync::oneshot::Sender<()>);
 
 #[cfg(test)]
 mod danmaku_sessions_tests {
-    use super::DanmakuSessions;
+    use super::*;
+    use std::any::TypeId;
+
+    #[test]
+    fn platform_states_are_distinct_types_for_tauri_manage() {
+        let ids = [
+            TypeId::of::<DouyinDanmakuState>(),
+            TypeId::of::<BilibiliDanmakuState>(),
+            TypeId::of::<HuyaDanmakuState>(),
+            TypeId::of::<DouyuDanmakuState>(),
+        ];
+        for (i, a) in ids.iter().enumerate() {
+            for b in &ids[i + 1..] {
+                assert_ne!(a, b, "two danmaku states share a type; app.manage() would panic");
+            }
+        }
+    }
 
     #[test]
     fn rooms_are_tracked_independently() {
