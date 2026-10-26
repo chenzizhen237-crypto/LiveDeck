@@ -66,7 +66,8 @@ export function SplitTile({
 
   return (
     <div
-      className={`group relative min-h-0 min-w-0 overflow-hidden rounded-[10px] bg-black transition-[opacity,box-shadow] ${
+      // isolate: the danmaku layer's z-index stays inside the tile instead of painting over the toolbar and panels
+      className={`group relative isolate min-h-0 min-w-0 overflow-hidden rounded-[10px] bg-black transition-[opacity,box-shadow] ${
         focused ? "ring-2 ring-accent" : "ring-1 ring-white/10"
       } ${dimmed ? "opacity-55" : ""} ${dragging ? "opacity-35" : ""} ${editing ? "cursor-grab active:cursor-grabbing" : ""}`}
       style={style}

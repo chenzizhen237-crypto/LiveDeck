@@ -210,9 +210,12 @@ export function LayoutPicker({
   onClose,
   gridAspect,
   onRequestSave,
-  onNotice
+  onNotice,
+  positionClass = "bottom-[calc(100%+10px)] left-0"
 }: {
   onClose: () => void;
+  /** Where it opens relative to the toolbar (it follows the toolbar when that's moved). */
+  positionClass?: string;
   /** Width / height of the grid area, for Auto Arrange. */
   gridAspect: number;
   onRequestSave: () => void;
@@ -244,7 +247,7 @@ export function LayoutPicker({
         animate={{ opacity: 1, y: 0, scale: 1 }}
         exit={{ opacity: 0, y: 8, scale: 0.98 }}
         transition={{ duration: 0.16 }}
-        className="absolute bottom-[calc(100%+10px)] left-0 z-10 flex w-[340px] flex-col gap-3 rounded-2xl border border-line-strong bg-elevated p-4 shadow-pop backdrop-blur-2xl"
+        className={`absolute ${positionClass} z-10 flex max-h-[calc(100vh-120px)] w-[340px] flex-col gap-3 overflow-y-auto rounded-2xl border border-line-strong bg-elevated p-4 shadow-pop backdrop-blur-2xl`}
       >
         <div className="flex items-center">
           <span className="text-sm font-bold text-fg">布局</span>

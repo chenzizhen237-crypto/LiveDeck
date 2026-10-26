@@ -3,7 +3,7 @@
 
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { AnimatePresence, m } from "framer-motion";
-import { Check, LayoutDashboard, LayoutGrid, MessageSquareText, Minimize2, MoveDiagonal2, Plus, Scan, Trash2, TriangleAlert, Volume2 } from "lucide-react";
+import { Check, GripVertical, LayoutDashboard, LayoutGrid, MessageSquareText, Minimize2, MoveDiagonal2, Plus, Scan, Trash2, TriangleAlert, Volume2 } from "lucide-react";
 
 import { PlatformMark } from "@/components/livedeck/primitives";
 import { applyDanmuFontFamilyForOS } from "@/components/player/constants";
@@ -56,6 +56,8 @@ export function SplitView() {
     noticeTimer.current = window.setTimeout(() => setNotice(null), n.undo ? 6000 : 3000);
   }, []);
   useEffect(() => () => window.clearTimeout(noticeTimer.current), []);
+
+  const dock = useDockPosition();
 
   const gridAspect = () => {
     const b = gridRef.current?.getBoundingClientRect();
@@ -295,10 +297,20 @@ export function SplitView() {
         </div>
       </div>
 
-      {/* above the toolbar: notices (with undo), unsaved-changes bar, edit-mode hint */}
-      <div className="pointer-events-none absolute inset-x-0 bottom-[66px] z-[20] flex flex-col items-center gap-2">
+      {saveAs !== null ? (
+        <SaveSetupDialog initialName={saveAs} onClose={() => setSaveAs(null)} onSaved={(name) => notify({ kind: "saved", message: `已保存「${name}」` })} />
+      ) : null}
+
+      {/* the dock: toolbar plus what hangs off it (notices, unsaved bar, edit hint, panels).
+          Draggable by its grip; everything opens toward the roomier side. */}
+      <div ref={dock.ref} className="absolute z-[30]" style={dock.style}>
+        <div
+          className={`pointer-events-none absolute left-1/2 flex w-max -translate-x-1/2 flex-col items-center gap-2 ${
+            dock.below ? "top-[calc(100%+10px)]" : "bottom-[calc(100%+10px)]"
+          } ${panel === "layout" ? "invisible" : ""}`}
+        >
         <AnimatePresence>
-          {notice && panel !== "layout" ? <NoticeToast key={notice.message} notice={notice} onDismiss={() => setNotice(null)} /> : null}
+          {notice ? <NoticeToast key={notice.message} notice={notice} onDismiss={() => setNotice(null)} /> : null}
         </AnimatePresence>
         {split.currentSetup && split.dirty && !editing ? (
           <div className="pointer-events-auto flex items-center gap-2.5 rounded-full border border-line-strong bg-elevated py-1.5 pr-1.5 pl-3.5 text-xs text-fg shadow-float">
@@ -328,22 +340,17 @@ export function SplitView() {
             </button>
           </div>
         ) : null}
-      </div>
-
-      {/* while the layout panel is open its notices show at the top, clear of the panel */}
-      {notice && panel === "layout" ? (
-        <div className="pointer-events-none absolute inset-x-0 top-14 z-[20] flex justify-center">
-          <NoticeToast notice={notice} onDismiss={() => setNotice(null)} />
         </div>
-      ) : null}
-
-      {saveAs !== null ? (
-        <SaveSetupDialog initialName={saveAs} onClose={() => setSaveAs(null)} onSaved={(name) => notify({ kind: "saved", message: `已保存「${name}」` })} />
-      ) : null}
-
-      {/* toolbar */}
-      <div className="absolute inset-x-0 bottom-3.5 flex justify-center">
         <div className="relative flex items-center gap-0.5 rounded-[14px] border border-line-strong bg-elevated p-[5px] text-fg shadow-float backdrop-blur-2xl">
+          <span
+            role="separator"
+            title="拖动移动工具栏 · 双击还原"
+            onPointerDown={dock.startDrag}
+            onDoubleClick={dock.reset}
+            className="grid h-7 w-4 cursor-grab touch-none place-items-center rounded-md text-fg-3 hover:bg-hover hover:text-fg-2 active:cursor-grabbing"
+          >
+            <GripVertical size={14} />
+          </span>
           <ToolButton active={panel === "layout"} onClick={() => setPanel(panel === "layout" ? null : "layout")} icon={<LayoutGrid size={15} />}>
             {split.layoutName}
           </ToolButton>
@@ -380,6 +387,7 @@ export function SplitView() {
                 key="layout"
                 onClose={() => setPanel(null)}
                 gridAspect={gridAspect()}
+                positionClass={dock.panelClass}
                 onNotice={notify}
                 onRequestSave={() => {
                   setPanel(null);
@@ -388,7 +396,7 @@ export function SplitView() {
               />
             ) : null}
             {panel && typeof panel === "object" ? (
-              <AddRoomPopover key="add" target={panel.add} onClose={() => setPanel(null)} className="absolute bottom-[calc(100%+10px)] left-1/2 -translate-x-1/2" />
+              <AddRoomPopover key="add" target={panel.add} onClose={() => setPanel(null)} className={`absolute left-1/2 -translate-x-1/2 ${dock.below ? "top-[calc(100%+10px)]" : "bottom-[calc(100%+10px)]"}`} />
             ) : null}
           </AnimatePresence>
         </div>
@@ -411,6 +419,82 @@ export function SplitPickBanner() {
       </div>
     </div>
   );
+}
+
+const DOCK_KEY = "ld_split_dock_v1";
+
+/**
+ * Toolbar position. Stored as fractions of the free space so it stays put
+ * proportionally when the window resizes; null = default (bottom centre).
+ */
+function useDockPosition() {
+  const ref = useRef<HTMLDivElement>(null);
+  const [frac, setFrac] = useState<{ fx: number; fy: number } | null>(() => {
+    try {
+      const v = JSON.parse(window.localStorage.getItem(DOCK_KEY) || "null");
+      return v && typeof v.fx === "number" && typeof v.fy === "number" ? v : null;
+    } catch {
+      return null;
+    }
+  });
+  const [, setTick] = useState(0);
+
+  useEffect(() => {
+    const onResize = () => setTick((n) => n + 1);
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, []);
+
+  const persist = (v: { fx: number; fy: number } | null) => {
+    try {
+      if (v) window.localStorage.setItem(DOCK_KEY, JSON.stringify(v));
+      else window.localStorage.removeItem(DOCK_KEY);
+    } catch {
+      // ignore
+    }
+  };
+
+  const size = () => {
+    const r = ref.current?.getBoundingClientRect();
+    return { w: r?.width ?? 640, h: r?.height ?? 46 };
+  };
+
+  const startDrag = (e: React.PointerEvent) => {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    const box = ref.current?.getBoundingClientRect();
+    if (!box) return;
+    const grab = { x: e.clientX - box.left, y: e.clientY - box.top };
+    const move = (ev: PointerEvent) => {
+      const { w, h } = size();
+      const freeW = Math.max(1, window.innerWidth - w - 16);
+      const freeH = Math.max(1, window.innerHeight - h - 16);
+      const left = Math.min(Math.max(8, ev.clientX - grab.x), 8 + freeW);
+      const top = Math.min(Math.max(8, ev.clientY - grab.y), 8 + freeH);
+      setFrac({ fx: (left - 8) / freeW, fy: (top - 8) / freeH });
+    };
+    const up = () => {
+      window.removeEventListener("pointermove", move);
+      setFrac((v) => (persist(v), v));
+    };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up, { once: true });
+  };
+
+  const reset = () => {
+    setFrac(null);
+    persist(null);
+  };
+
+  const { w, h } = size();
+  const style: React.CSSProperties = frac
+    ? { left: 8 + frac.fx * Math.max(1, window.innerWidth - w - 16), top: 8 + frac.fy * Math.max(1, window.innerHeight - h - 16) }
+    : { left: "50%", bottom: 14, transform: "translateX(-50%)" };
+  // Open panels downward when the bar sits in the top half, and right-align them near the right edge.
+  const below = !!frac && frac.fy < 0.5;
+  const rightAligned = !!frac && frac.fx > 0.6;
+  const panelClass = `${below ? "top-[calc(100%+10px)]" : "bottom-[calc(100%+10px)]"} ${rightAligned ? "right-0" : "left-0"}`;
+  return { ref, style, below, panelClass, startDrag, reset };
 }
 
 function NoticeToast({ notice, onDismiss }: { notice: PanelNotice; onDismiss: () => void }) {
