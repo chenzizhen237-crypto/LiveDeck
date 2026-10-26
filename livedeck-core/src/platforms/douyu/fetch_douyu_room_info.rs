@@ -165,7 +165,7 @@ mod tests {
 
         let info = parse_douyu_room_info(input_room_id, &v).unwrap();
 
-        info!(info = ?info, "Parsed room info");
+        tracing::info!(info = ?info, "Parsed room info");
         assert_eq!(info.room_id, "74960");
         assert_eq!(info.room_name.as_deref(), Some("test room"));
         assert_eq!(info.nickname.as_deref(), Some("tester"));

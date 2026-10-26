@@ -492,11 +492,11 @@ pub trait StructToTars {
     fn _encode_to(&self, encoder: &mut TarsEncoder) -> Result<(), EncodeErr>;
 }
 
-/// Encodes a struct's fields without the surrounding struct markers
-/// (tars-stream's `individual_encode`).
-pub fn encode_struct_fields<T: StructToTars>(value: &T) -> Result<Vec<u8>, EncodeErr> {
+/// Encodes a struct as a standalone value: struct markers at tag 0, which is
+/// what TUP/UniAttribute map values contain (tars-stream's `individual_encode`).
+pub fn encode_struct<T: StructToTars>(value: &T) -> Result<Vec<u8>, EncodeErr> {
     let mut encoder = TarsEncoder::new();
-    value._encode_to(&mut encoder)?;
+    encoder.write_struct(0, value)?;
     Ok(encoder.to_bytes())
 }
 
@@ -668,7 +668,7 @@ mod tests {
 
     #[test]
     fn nested_struct_and_bytes_map_round_trip() {
-        let inner = encode_struct_fields(&Pair { a: 7, b: "flv".into() }).unwrap();
+        let inner = encode_struct(&Pair { a: 7, b: "flv".into() }).unwrap();
         let mut map = BTreeMap::new();
         map.insert("tReq".to_string(), inner);
         let mut e = TarsEncoder::new();
@@ -678,7 +678,9 @@ mod tests {
 
         let mut d = TarsDecoder::from(bytes.as_slice());
         let decoded = d.read_bytes_map(0).unwrap();
-        let pair = Pair::_decode_from(&mut TarsDecoder::from(decoded["tReq"].as_slice())).unwrap();
+        let pair = TarsDecoder::from(decoded["tReq"].as_slice())
+            .read_struct(0, true, Pair { a: 0, b: String::new() })
+            .unwrap();
         assert_eq!((pair.a, pair.b.as_str()), (7, "flv"));
         // Fields after a map must still be reachable (skip_value handles maps).
         let s = d.read_struct(1, true, Pair { a: 0, b: String::new() }).unwrap();

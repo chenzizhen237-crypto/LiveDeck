@@ -1,0 +1,106 @@
+@import "tailwindcss";
+
+@font-face {
+  font-family: "OPPOSans";
+  src: url("./assets/OPPOSans-Regular-subset.woff2") format("woff2");
+  font-weight: 400;
+  font-display: swap;
+}
+@font-face {
+  font-family: "OPPOSans";
+  src: url("./assets/OPPOSans-Bold-subset.woff2") format("woff2");
+  font-weight: 700;
+  font-display: swap;
+}
+
+/* Theme tokens. Dark is the default; [data-theme] on <html> forces either. */
+:root {
+  color-scheme: dark;
+  --app: #0b0b0d;
+  --panel: #141417;
+  --panel-2: #1c1c21;
+  --panel-3: #26262c;
+  --line: #2a2a31;
+  --text: #f2f2f4;
+  --text-2: #a3a3ad;
+  --text-3: #6d6d78;
+  --accent: #1ed27a;
+  --accent-ink: #04140b;
+  --live: #ff3b4a;
+}
+
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]) {
+    color-scheme: light;
+    --app: #e9e9ee;
+    --panel: #ffffff;
+    --panel-2: #f3f3f6;
+    --panel-3: #e7e7ec;
+    --line: #dcdce3;
+    --text: #141417;
+    --text-2: #575762;
+    --text-3: #8a8a96;
+    --accent: #12a85f;
+    --accent-ink: #ffffff;
+  }
+}
+
+:root[data-theme="light"] {
+  color-scheme: light;
+  --app: #e9e9ee;
+  --panel: #ffffff;
+  --panel-2: #f3f3f6;
+  --panel-3: #e7e7ec;
+  --line: #dcdce3;
+  --text: #141417;
+  --text-2: #575762;
+  --text-3: #8a8a96;
+  --accent: #12a85f;
+  --accent-ink: #ffffff;
+}
+
+@theme inline {
+  --color-app: var(--app);
+  --color-panel: var(--panel);
+  --color-panel-2: var(--panel-2);
+  --color-panel-3: var(--panel-3);
+  --color-line: var(--line);
+  --color-text: var(--text);
+  --color-text-2: var(--text-2);
+  --color-text-3: var(--text-3);
+  --color-accent: var(--accent);
+  --color-accent-ink: var(--accent-ink);
+  --color-live: var(--live);
+  --font-sans: "OPPOSans", ui-sans-serif, system-ui, -apple-system, "PingFang SC", sans-serif;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--app);
+  color: var(--text);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  user-select: none;
+  overflow: hidden;
+}
+
+/* Thin, unobtrusive scrollbars. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--panel-3) transparent;
+}
+
+@keyframes danmaku-fly {
+  from {
+    transform: translateX(0);
+  }
+  to {
+    transform: translateX(calc(-100% - var(--stage-width)));
+  }
+}

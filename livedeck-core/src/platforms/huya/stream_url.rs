@@ -13,7 +13,7 @@ use reqwest::header::{
 use serde::Serialize;
 use serde_json::Value;
 use crate::platforms::huya::tars::{
-    encode_struct_fields, DecodeErr, EncodeErr, StructFromTars, StructToTars, TarsDecoder,
+    encode_struct, DecodeErr, EncodeErr, StructFromTars, StructToTars, TarsDecoder,
     TarsEncoder,
 };
 
@@ -251,8 +251,9 @@ impl StructFromTars for GetCdnTokenExResp {
     }
 }
 
+/// UniAttribute values hold the struct at tag 0, wrapped in struct markers.
 fn decode_cdn_token_resp(bytes: &[u8]) -> Result<GetCdnTokenExResp, DecodeErr> {
-    GetCdnTokenExResp::_decode_from(&mut TarsDecoder::from(bytes))
+    TarsDecoder::from(bytes).read_struct(0, true, GetCdnTokenExResp::default())
 }
 
 fn encode_tars_request_packet(
@@ -380,7 +381,7 @@ async fn huya_get_cdn_token_info_ex(
         i_app_id: 66,
     };
     let mut req_map: BTreeMap<String, Vec<u8>> = BTreeMap::new();
-    let req_bytes = encode_struct_fields(&req).map_err(|e| e.to_string())?;
+    let req_bytes = encode_struct(&req).map_err(|e| e.to_string())?;
     req_map.insert("tReq".to_string(), req_bytes);
     let mut map_encoder = TarsEncoder::new();
     map_encoder

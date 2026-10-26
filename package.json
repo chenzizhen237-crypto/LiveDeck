@@ -1,31 +1,44 @@
 {
-  "name": "dtv",
+  "name": "livedeck",
   "private": true,
-  "version": "3.0.3",
+  "version": "0.1.0",
+  "license": "AGPL-3.0",
   "type": "module",
   "scripts": {
-    "dev": "pnpm -C web dev",
-    "build": "pnpm -C web build",
-    "preview": "pnpm -C web start",
+    "dev": "vite",
+    "build": "tsc -b && vite build",
+    "typecheck": "tsc -b",
     "tauri": "tauri"
-  },
-  "dependencies": {
-    "@tauri-apps/api": "^2.7.0",
-    "@tauri-apps/plugin-opener": "^2.4.0",
-    "@tauri-apps/plugin-os": "^2.3.0",
-    "@tauri-apps/plugin-updater": "^2.3.0"
-  },
-  "devDependencies": {
-    "@tauri-apps/cli": "^2.7.0",
-    "typescript": "~5.6.2",
-    "vite": "^6.0.3"
   },
   "pnpm": {
     "onlyBuiltDependencies": [
-      "core-js",
-      "esbuild",
-      "es5-ext",
-      "sharp"
+      "esbuild"
     ]
+  },
+  "dependencies": {
+    "@tanstack/react-query": "^5.104.5",
+    "@tauri-apps/api": "^2.12.4",
+    "@tauri-apps/plugin-opener": "^2.7.2",
+    "@tauri-apps/plugin-os": "^2.4.0",
+    "clsx": "^2.1.1",
+    "lucide-react": "^1.61.0",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1",
+    "react-router": "^8.5.0",
+    "xgplayer": "^3.0.26",
+    "xgplayer-flv": "^3.0.26",
+    "xgplayer-hls": "^3.0.26",
+    "zustand": "^5.0.16"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "^4.3.3",
+    "@tauri-apps/cli": "^2.12.4",
+    "@types/node": "^26.6.5",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "@vitejs/plugin-react": "^6.1.2",
+    "tailwindcss": "^4.3.3",
+    "typescript": "^7.0.2",
+    "vite": "^8.3.5"
   }
 }
