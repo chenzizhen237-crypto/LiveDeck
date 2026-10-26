@@ -85,7 +85,7 @@ pub struct DouyuDanmakuState(pub std::sync::Mutex<Option<tokio::sync::mpsc::Send
 #[allow(dead_code)]
 pub struct HuyaDanmakuState(pub std::sync::Mutex<Option<tokio::sync::mpsc::Sender<()>>>);
 
-#[derive(Serialize, Clone, Debug, specta::Type)]
+#[derive(Serialize, Deserialize, Clone, Debug, specta::Type)]
 pub struct DanmakuFrontendPayload {
     pub room_id: String,
     pub user: String,
@@ -98,7 +98,7 @@ pub struct DanmakuFrontendPayload {
 // --- Merged from types_rust.rs ---
 
 // Enum mirroring TypeScript SupportedPlatform
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq, Hash)]
 pub enum SupportedPlatform {
     #[serde(rename = "douyu")]
     Douyu,

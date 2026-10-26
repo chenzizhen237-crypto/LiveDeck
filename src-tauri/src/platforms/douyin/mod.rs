@@ -1,17 +1,12 @@
-pub mod danmu;
-pub mod douyin_danmu_listener;
-pub mod douyin_streamer_detail;
-pub mod douyin_streamer_info;
-pub mod douyin_streamer_list;
-pub mod models;
-pub mod web_api;
-pub mod a_bogus;
+#[allow(unused_imports)]
+pub use livedeck_core::platforms::douyin::danmu;
 
-pub use self::danmu::web_fetcher::fetch_douyin_room_info;
-pub use self::douyin_danmu_listener::start_douyin_danmu_listener;
-pub use self::douyin_danmu_listener::stop_douyin_danmu_listener;
-pub use self::douyin_streamer_detail::{
-    get_douyin_live_stream_url, get_douyin_live_stream_url_with_quality,
-};
-pub use self::douyin_streamer_info::fetch_douyin_streamer_info;
-pub use self::douyin_streamer_list::fetch_douyin_partition_rooms;
+#[allow(unused_imports)]
+pub use livedeck_core::platforms::douyin::a_bogus;
+#[allow(unused_imports)]
+pub use livedeck_core::platforms::douyin::signed_url;
+#[allow(unused_imports)]
+pub use livedeck_core::platforms::douyin::web_api;
+
+pub use livedeck_core::platforms::douyin::douyin_streamer_detail;
+pub use livedeck_core::platforms::douyin::douyin_streamer_info;

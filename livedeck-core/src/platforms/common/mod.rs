@@ -8,6 +8,7 @@ pub mod errors;
 pub mod signing;
 pub mod live_stream_v2;
 pub mod types;
+pub mod flv_relay;
 
 // Re-export necessary types to make them available directly under platforms::common::TypeName
 pub use http_client::FollowHttpClient;

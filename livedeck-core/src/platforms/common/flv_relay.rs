@@ -283,7 +283,7 @@ impl std::fmt::Display for OpenError {
 }
 
 async fn resolve_douyu_url(ctx: &StreamRenewContext) -> Result<String, String> {
-    crate::platforms::douyu::get_stream_url_with_quality(
+    crate::platforms::douyu::stream_url::get_stream_url_with_quality(
         &ctx.room_id,
         &ctx.quality,
         ctx.line.as_deref(),

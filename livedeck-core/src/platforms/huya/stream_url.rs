@@ -238,7 +238,8 @@ impl StructToTars for GetCdnTokenExReq {
 #[derive(Clone, Debug, Default)]
 struct GetCdnTokenExResp {
     s_flv_token: String, // tag 0
-    i_expire_time: i32,  // tag 1
+    #[allow(dead_code)]
+    i_expire_time: i32, // tag 1
 }
 
 impl StructFromTars for GetCdnTokenExResp {

@@ -7,7 +7,7 @@ use serde_json::Value;
 
 use crate::platforms::common::errors::DtvError;
 use crate::platforms::common::FollowHttpClient;
-use tracing::{info, instrument};
+use tracing::instrument;
 
 // Define the structure to be returned to TypeScript
 #[derive(Serialize, Deserialize, Debug, Default)]
