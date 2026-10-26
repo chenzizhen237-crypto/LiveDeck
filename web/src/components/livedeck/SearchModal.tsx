@@ -99,7 +99,10 @@ export function SearchModal({ onClose, onPickCategory }: { onClose: () => void; 
   };
 
   const onKey = (e: React.KeyboardEvent) => {
-    if (e.key === "Escape") onClose();
+    if (e.key === "Escape") {
+      e.preventDefault(); // unhandled Esc exits macOS full screen
+      onClose();
+    }
     else if (e.key === "ArrowDown") {
       e.preventDefault();
       setActive((i) => Math.min(i + 1, flat.length - 1));

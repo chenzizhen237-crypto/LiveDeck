@@ -116,6 +116,63 @@ export function moveTile<T extends Placed>(tiles: T[], id: string, to: { col: nu
 }
 
 /**
+ * Drag-move: keep the tile's span with its top-left at `topLeft` (where the
+ * grab offset puts it) if that fits, else drop it as one cell under the pointer.
+ * Swapping with another tile is handled separately.
+ */
+export function dragMove<T extends Placed>(
+  tiles: T[],
+  id: string,
+  topLeft: { col: number; row: number },
+  pointer: { col: number; row: number },
+  cols: number,
+  rows: number
+): T[] | null {
+  const t = tiles.find((x) => x.id === id);
+  if (!t) return null;
+  const others = tiles.filter((x) => x.id !== id);
+  const clamp = (v: number, span: number, max: number) => Math.max(0, Math.min(max - span, v));
+  const spanned: Rect = {
+    col: clamp(topLeft.col, t.rect.colSpan, cols),
+    row: clamp(topLeft.row, t.rect.rowSpan, rows),
+    colSpan: t.rect.colSpan,
+    rowSpan: t.rect.rowSpan
+  };
+  const single: Rect = { col: pointer.col, row: pointer.row, colSpan: 1, rowSpan: 1 };
+  for (const r of [spanned, single]) {
+    if (inBounds(r, cols, rows) && !others.some((o) => overlaps(o.rect, r))) {
+      return tiles.map((x) => (x.id === id ? { ...x, rect: r } : x));
+    }
+  }
+  return null;
+}
+
+/**
+ * Resize from any edge or corner: `handle` names the moving sides (n, s, e, w
+ * or a corner like "nw"); the opposite sides stay put. Returns the new rect.
+ */
+export function rectFromHandle(rect: Rect, handle: string, pointer: { col: number; row: number }): Rect {
+  let { col, row, colSpan, rowSpan } = rect;
+  const right = rect.col + rect.colSpan - 1;
+  const bottom = rect.row + rect.rowSpan - 1;
+  if (handle.includes("e")) {
+    col = Math.min(rect.col, pointer.col);
+    colSpan = Math.abs(pointer.col - rect.col) + 1;
+  } else if (handle.includes("w")) {
+    col = Math.min(right, pointer.col);
+    colSpan = Math.abs(right - pointer.col) + 1;
+  }
+  if (handle.includes("s")) {
+    row = Math.min(rect.row, pointer.row);
+    rowSpan = Math.abs(pointer.row - rect.row) + 1;
+  } else if (handle.includes("n")) {
+    row = Math.min(bottom, pointer.row);
+    rowSpan = Math.abs(bottom - pointer.row) + 1;
+  }
+  return { col, row, colSpan, rowSpan };
+}
+
+/**
  * Changes the grid size. Tiles keep their place when they still fit; the rest
  * (clipped or pushed out) are re-placed as single cells. Null if they can't all fit.
  */

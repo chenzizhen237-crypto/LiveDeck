@@ -11,9 +11,9 @@ import {
   PRESETS,
   applySlots,
   clampDim,
+  dragMove,
   freeCells,
   gridFor,
-  moveTile,
   resizeGrid,
   resizeTile,
   swapTiles,
@@ -59,7 +59,9 @@ type SplitContextValue = SplitState & {
   spanTile: (id: string, rect: Rect) => boolean;
   previewSpan: (id: string, rect: Rect) => boolean;
   swap: (a: string, b: string) => void;
-  move: (id: string, to: { col: number; row: number }) => boolean;
+  /** Where a drag would put the tile (span kept at `topLeft`, else one cell at `pointer`); null if nowhere. */
+  previewMove: (id: string, topLeft: { col: number; row: number }, pointer: { col: number; row: number }) => Rect | null;
+  move: (id: string, topLeft: { col: number; row: number }, pointer: { col: number; row: number }) => boolean;
   setDanmakuAll: (v: boolean) => void;
   setAudioFollowsClick: (v: boolean) => void;
   beginPick: (target: PickTarget) => void;
@@ -235,9 +237,14 @@ export function SplitProvider({ children }: { children: React.ReactNode }) {
     setState((s) => ({ ...s, tiles: swapTiles(s.tiles, a, b), layoutName: "Custom" }));
   }, []);
 
-  const move = useCallback((id: string, to: { col: number; row: number }) => {
+  const previewMove = useCallback((id: string, topLeft: { col: number; row: number }, pointer: { col: number; row: number }) => {
     const s = stateRef.current;
-    const next = moveTile(s.tiles, id, to, s.cols, s.rows);
+    return dragMove(s.tiles, id, topLeft, pointer, s.cols, s.rows)?.find((t) => t.id === id)?.rect ?? null;
+  }, []);
+
+  const move = useCallback((id: string, topLeft: { col: number; row: number }, pointer: { col: number; row: number }) => {
+    const s = stateRef.current;
+    const next = dragMove(s.tiles, id, topLeft, pointer, s.cols, s.rows);
     if (!next) return false;
     setState((cur) => ({ ...cur, tiles: next, layoutName: "Custom" }));
     return true;
@@ -265,6 +272,7 @@ export function SplitProvider({ children }: { children: React.ReactNode }) {
       spanTile,
       previewSpan,
       swap,
+      previewMove,
       move,
       setDanmakuAll,
       setAudioFollowsClick,
@@ -272,7 +280,7 @@ export function SplitProvider({ children }: { children: React.ReactNode }) {
       cancelPick,
       emptyCells
     }),
-    [state, picking, openWith, close, addRoom, removeTile, focus, toggleZoom, applyPreset, setGrid, spanTile, previewSpan, swap, move, setDanmakuAll, setAudioFollowsClick, beginPick, cancelPick, emptyCells]
+    [state, picking, openWith, close, addRoom, removeTile, focus, toggleZoom, applyPreset, setGrid, spanTile, previewSpan, swap, previewMove, move, setDanmakuAll, setAudioFollowsClick, beginPick, cancelPick, emptyCells]
   );
 
   return <SplitContext.Provider value={value}>{children}</SplitContext.Provider>;

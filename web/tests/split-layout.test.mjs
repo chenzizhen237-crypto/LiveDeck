@@ -6,10 +6,12 @@ import assert from "node:assert/strict";
 import {
   PRESETS,
   applySlots,
+  dragMove,
   freeCells,
   gridFor,
   moveTile,
   overlaps,
+  rectFromHandle,
   resizeGrid,
   resizeTile,
   swapTiles
@@ -86,4 +88,25 @@ test("gridFor grows columns first and caps at 4×4", () => {
   assert.deepEqual(gridFor(5), { cols: 3, rows: 2 });
   assert.deepEqual(gridFor(12), { cols: 4, rows: 3 });
   assert.deepEqual(gridFor(40), { cols: 4, rows: 4 });
+});
+
+test("drag-move keeps the span at the grab offset, else lands as one cell", () => {
+  const tiles = [t("a", 0, 0, 2, 2), t("b", 3, 3)];
+  // 4×4: drop a 2×2 with its top-left at (2,0) → fits.
+  assert.deepEqual(rectOf(dragMove(tiles, "a", { col: 2, row: 0 }, { col: 2, row: 0 }, 4, 4), "a"), { col: 2, row: 0, colSpan: 2, rowSpan: 2 });
+  // Top-left past the edge is clamped back inside.
+  assert.deepEqual(rectOf(dragMove(tiles, "a", { col: 3, row: 0 }, { col: 3, row: 0 }, 4, 4), "a"), { col: 2, row: 0, colSpan: 2, rowSpan: 2 });
+  // 2×2 at (2,2) would cover b → falls back to one cell at the pointer.
+  assert.deepEqual(rectOf(dragMove(tiles, "a", { col: 2, row: 2 }, { col: 2, row: 2 }, 4, 4), "a"), { col: 2, row: 2, colSpan: 1, rowSpan: 1 });
+  assert.equal(dragMove(tiles, "a", { col: 3, row: 3 }, { col: 3, row: 3 }, 4, 4), null, "pointer on another tile");
+});
+
+test("resize handles move only their own sides", () => {
+  const r = { col: 1, row: 1, colSpan: 1, rowSpan: 1 };
+  assert.deepEqual(rectFromHandle(r, "se", { col: 2, row: 2 }), { col: 1, row: 1, colSpan: 2, rowSpan: 2 });
+  assert.deepEqual(rectFromHandle(r, "nw", { col: 0, row: 0 }), { col: 0, row: 0, colSpan: 2, rowSpan: 2 });
+  assert.deepEqual(rectFromHandle(r, "n", { col: 3, row: 0 }), { col: 1, row: 0, colSpan: 1, rowSpan: 2 }, "edge ignores the other axis");
+  assert.deepEqual(rectFromHandle(r, "w", { col: 0, row: 3 }), { col: 0, row: 1, colSpan: 2, rowSpan: 1 });
+  // Dragging the left edge past the right one flips instead of going negative.
+  assert.deepEqual(rectFromHandle({ col: 1, row: 0, colSpan: 2, rowSpan: 1 }, "w", { col: 3, row: 0 }), { col: 2, row: 0, colSpan: 2, rowSpan: 1 });
 });

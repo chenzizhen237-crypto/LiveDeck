@@ -33,7 +33,9 @@ export function PlayerOverlayHost() {
   useEffect(() => {
     if (!isOpen) return;
     const onKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "Escape") closePlayer();
+      if (e.key !== "Escape") return;
+      e.preventDefault(); // unhandled Esc exits macOS full screen
+      closePlayer();
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);

@@ -143,7 +143,11 @@ function FollowPopover({ onClose }: { onClose: () => void }) {
       const trigger = (e.target as HTMLElement).closest("[aria-label='关注列表']");
       if (ref.current && !ref.current.contains(e.target as Node) && !trigger) onClose();
     };
-    const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      e.preventDefault(); // unhandled Esc exits macOS full screen
+      onClose();
+    };
     window.addEventListener("mousedown", onDown);
     window.addEventListener("keydown", onKey);
     return () => {

@@ -5,11 +5,11 @@ import React, { useCallback, useEffect, useRef, useState } from "react";
 import { AnimatePresence } from "framer-motion";
 import { LayoutGrid, MessageSquareText, Minimize2, MoveDiagonal2, Plus, Scan, Volume2 } from "lucide-react";
 
-import { Kbd, PlatformMark } from "@/components/livedeck/primitives";
+import { PlatformMark } from "@/components/livedeck/primitives";
 import { applyDanmuFontFamilyForOS } from "@/components/player/constants";
 import { usePlayerOverlay } from "@/state/playerOverlay/PlayerOverlayProvider";
 import { useSplit, type PickTarget } from "@/state/split/SplitProvider";
-import type { Rect } from "@/state/split/layout";
+import { rectFromHandle, type Rect } from "@/state/split/layout";
 import { AddRoomPopover } from "./AddRoomPopover";
 import { LayoutPicker } from "./LayoutPicker";
 import { SplitTile } from "./SplitTile";
@@ -29,9 +29,13 @@ function qualityFor(tileCount: number, platform: string) {
   }
 }
 
+type Cell = { col: number; row: number };
 type Drag =
   | { kind: "span"; id: string; rect: Rect; ok: boolean }
-  | { kind: "move"; id: string; cell: { col: number; row: number } | null; overId: string | null };
+  // Move: `rect` is where it lands (null = nowhere); `overId` set means a swap.
+  | { kind: "move"; id: string; rect: Rect | null; overId: string | null };
+
+const DRAG_THRESHOLD_PX = 6;
 
 export function SplitView() {
   const split = useSplit();
@@ -40,6 +44,7 @@ export function SplitView() {
   const [editing, setEditing] = useState(false);
   const [panel, setPanel] = useState<null | "layout" | { add: PickTarget }>(null);
   const [drag, setDrag] = useState<Drag | null>(null);
+  const dragAbort = useRef<null | (() => void)>(null);
   const focused = split.tiles.find((t) => t.id === split.focusId) ?? null;
   const hidden = !!split.picking;
 
@@ -47,17 +52,23 @@ export function SplitView() {
     void applyDanmuFontFamilyForOS().catch(() => {});
   }, []);
 
-  // Esc unwinds one level: picking → popover → zoom → edit mode. It never closes split itself.
+  // Esc unwinds one level: drag → picking → popover → zoom → edit mode. It never closes split
+  // itself. Handled presses call preventDefault: in a macOS full-screen window an Esc the page
+  // leaves unhandled goes up to AppKit, which exits full screen.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== "Escape") return;
-      if (split.picking) split.cancelPick();
+      if (dragAbort.current) dragAbort.current();
+      else if (split.picking) split.cancelPick();
       else if (panel) setPanel(null);
       else if (split.zoomId) split.toggleZoom(split.zoomId);
       else if (editing) setEditing(false);
+      else return;
+      e.preventDefault();
+      e.stopPropagation();
     };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
   }, [editing, panel, split]);
 
   const cellAt = useCallback(
@@ -74,62 +85,83 @@ export function SplitView() {
     [split.cols, split.rows]
   );
 
-  // Corner-drag to span: the tile keeps its top-left cell and grows/shrinks to the pointer.
-  const startSpan = useCallback(
-    (id: string, e: React.PointerEvent) => {
+  /** Runs a pointer drag: `onMove` per move, `onDrop` on release; Esc cancels. */
+  const runDrag = useCallback((onMove: (c: Cell, ev: PointerEvent) => void, onDrop: () => void) => {
+    const move = (ev: PointerEvent) => {
+      const c = cellAt(ev.clientX, ev.clientY);
+      if (c) onMove(c, ev);
+    };
+    const end = (commit: boolean) => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", up);
+      dragAbort.current = null;
+      if (commit) onDrop();
+      setDrag(null);
+    };
+    const up = () => end(true);
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up);
+    dragAbort.current = () => end(false);
+  }, [cellAt]);
+
+  // Resize from any corner/edge: the opposite sides stay where they are.
+  const startResize = useCallback(
+    (id: string, handle: string, e: React.PointerEvent) => {
       const tile = split.tiles.find((t) => t.id === id);
-      if (!tile) return;
+      if (!tile || e.button !== 0) return;
       e.preventDefault();
-      const onMove = (ev: PointerEvent) => {
-        const c = cellAt(ev.clientX, ev.clientY);
-        if (!c) return;
-        const rect: Rect = {
-          col: tile.rect.col,
-          row: tile.rect.row,
-          colSpan: Math.max(1, c.col - tile.rect.col + 1),
-          rowSpan: Math.max(1, c.row - tile.rect.row + 1)
-        };
-        setDrag({ kind: "span", id, rect, ok: split.previewSpan(id, rect) });
-      };
-      const onUp = () => {
-        window.removeEventListener("pointermove", onMove);
-        setDrag((d) => {
-          if (d?.kind === "span" && d.ok) split.spanTile(d.id, d.rect);
-          return null;
-        });
-      };
-      window.addEventListener("pointermove", onMove);
-      window.addEventListener("pointerup", onUp, { once: true });
+      let latest: Drag | null = null;
+      runDrag(
+        (c) => {
+          const rect = rectFromHandle(tile.rect, handle, c);
+          latest = { kind: "span", id, rect, ok: split.previewSpan(id, rect) };
+          setDrag(latest);
+        },
+        () => {
+          if (latest?.kind === "span" && latest.ok) split.spanTile(latest.id, latest.rect);
+        }
+      );
     },
-    [cellAt, split]
+    [runDrag, split]
   );
 
-  // Header-drag (edit mode): drop on a tile to swap, on an empty cell to move.
-  const startMove = useCallback(
+  // Drag a tile: onto another tile swaps them; onto free space moves it, keeping its span
+  // where it fits (anchored where you grabbed it), else as one cell under the pointer.
+  const startDrag = useCallback(
     (id: string, e: React.PointerEvent) => {
-      e.preventDefault();
-      const onMove = (ev: PointerEvent) => {
-        const c = cellAt(ev.clientX, ev.clientY);
-        if (!c) return;
-        const over = split.tiles.find(
-          (t) => t.id !== id && c.col >= t.rect.col && c.col < t.rect.col + t.rect.colSpan && c.row >= t.rect.row && c.row < t.rect.row + t.rect.rowSpan
-        );
-        setDrag({ kind: "move", id, cell: c, overId: over?.id ?? null });
-      };
-      const onUp = () => {
-        window.removeEventListener("pointermove", onMove);
-        setDrag((d) => {
-          if (d?.kind === "move") {
-            if (d.overId) split.swap(d.id, d.overId);
-            else if (d.cell) split.move(d.id, d.cell);
+      const tile = split.tiles.find((t) => t.id === id);
+      if (!tile || e.button !== 0 || split.zoomId) return;
+      const grab = cellAt(e.clientX, e.clientY);
+      if (!grab) return;
+      const offset = { col: grab.col - tile.rect.col, row: grab.row - tile.rect.row };
+      const start = { x: e.clientX, y: e.clientY };
+      let started = false;
+      let latest: Drag | null = null;
+      // The inputs behind the latest preview, so the drop lands exactly where the ghost was.
+      let moveArgs: { topLeft: Cell; pointer: Cell } | null = null;
+      runDrag(
+        (c, ev) => {
+          if (!started) {
+            if (Math.hypot(ev.clientX - start.x, ev.clientY - start.y) < DRAG_THRESHOLD_PX) return;
+            started = true;
           }
-          return null;
-        });
-      };
-      window.addEventListener("pointermove", onMove);
-      window.addEventListener("pointerup", onUp, { once: true });
+          const over = split.tiles.find(
+            (t) => t.id !== id && c.col >= t.rect.col && c.col < t.rect.col + t.rect.colSpan && c.row >= t.rect.row && c.row < t.rect.row + t.rect.rowSpan
+          );
+          moveArgs = over ? null : { topLeft: { col: c.col - offset.col, row: c.row - offset.row }, pointer: c };
+          latest = over
+            ? { kind: "move", id, rect: over.rect, overId: over.id }
+            : { kind: "move", id, rect: split.previewMove(id, moveArgs!.topLeft, c), overId: null };
+          setDrag(latest);
+        },
+        () => {
+          if (latest?.kind !== "move") return;
+          if (latest.overId) split.swap(latest.id, latest.overId);
+          else if (latest.rect && moveArgs) split.move(latest.id, moveArgs.topLeft, moveArgs.pointer);
+        }
+      );
     },
-    [cellAt, split]
+    [cellAt, runDrag, split]
   );
 
   const exitSplit = () => {
@@ -162,9 +194,7 @@ export function SplitView() {
               style={area(c)}
               onClick={() => setPanel({ add: { cell: { col: c.col, row: c.row } } })}
               className={`flex min-h-0 flex-col items-center justify-center gap-2 rounded-[10px] border transition-colors ${
-                drag?.kind === "move" && drag.cell?.col === c.col && drag.cell?.row === c.row
-                  ? "border-accent bg-accent-soft"
-                  : "border-white/10 bg-white/[0.03] hover:border-white/20 hover:bg-white/[0.06]"
+                "border-white/10 bg-white/[0.03] hover:border-white/20 hover:bg-white/[0.06]"
               }`}
             >
               <span className="grid size-10 place-items-center rounded-full bg-accent-soft text-accent">
@@ -189,18 +219,19 @@ export function SplitView() {
                 danmakuOn={showDanmaku(t.id) && !hiddenByZoom}
                 zoomed={zoomed}
                 editing={editing}
-                dimmed={drag?.kind === "move" && drag.id !== t.id && drag.overId !== t.id}
+                dimmed={false}
+                dragging={drag?.kind === "move" && drag.id === t.id}
                 onFocus={() => split.focus(t.id)}
                 clickFocuses={split.audioFollowsClick}
                 onToggleZoom={() => split.toggleZoom(t.id)}
                 onReplace={() => setPanel({ add: { replaceTileId: t.id } })}
                 onClose={() => split.removeTile(t.id)}
-                onGripPointerDown={(e) => startSpan(t.id, e)}
-                onHeaderPointerDown={(e) => startMove(t.id, e)}
+                onResizePointerDown={(e, handle) => startResize(t.id, handle, e)}
+                onDragPointerDown={(e) => startDrag(t.id, e)}
                 style={
                   zoomed
                     ? { gridColumn: "1 / -1", gridRow: "1 / -1", zIndex: 5 }
-                    : { ...area(t.rect), visibility: hiddenByZoom ? "hidden" : undefined, outline: drag?.kind === "move" && drag.overId === t.id ? "2px solid var(--ld-accent)" : undefined }
+                    : { ...area(t.rect), visibility: hiddenByZoom ? "hidden" : undefined }
                 }
               />
             );
@@ -215,6 +246,17 @@ export function SplitView() {
               {Array.from({ length: split.cols * split.rows }, (_, i) => (
                 <span key={i} className="rounded-[10px] border border-accent/25 bg-accent/[0.03]" />
               ))}
+            </div>
+          ) : null}
+
+          {drag?.kind === "move" && drag.rect ? (
+            <div
+              className="pointer-events-none relative z-10 flex items-end justify-start rounded-[10px] border-2 border-accent bg-accent/15 p-2.5"
+              style={area(drag.rect)}
+            >
+              <span className="inline-flex items-center gap-1.5 rounded-lg bg-accent px-2.5 py-1.5 text-xs font-extrabold text-on-accent">
+                {drag.overId ? "交换位置" : "移到这里"}
+              </span>
             </div>
           ) : null}
 
@@ -237,10 +279,12 @@ export function SplitView() {
       </div>
 
       {editing ? (
-        <div className="absolute inset-x-0 top-2.5 z-[620] flex justify-center">
-          <div className="flex items-center gap-2 rounded-full border border-line-strong bg-elevated px-3 py-1.5 text-xs font-semibold text-fg shadow-float">
-            拖动右下角跨格 <span className="text-fg-3">·</span> 拖动标题交换位置 <span className="text-fg-3">·</span> <Kbd>esc</Kbd>
-            <span className="text-fg-3">完成</span>
+        <div className="absolute inset-x-0 bottom-[66px] z-[20] flex justify-center">
+          <div className="flex items-center gap-2 rounded-full border border-line-strong bg-elevated py-1 pr-1 pl-3 text-xs font-semibold text-fg shadow-float">
+            拖动画面移动或交换 <span className="text-fg-3">·</span> 拖动四边或四角跨格
+            <button type="button" onClick={() => setEditing(false)} className="rounded-full bg-accent px-3 py-1 font-bold text-on-accent">
+              完成
+            </button>
           </div>
         </div>
       ) : null}
