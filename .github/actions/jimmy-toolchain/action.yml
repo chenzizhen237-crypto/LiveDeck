@@ -1,0 +1,33 @@
+name: Jimmy toolchain
+description: >
+  Puts the tools already installed on Jimmy (the self-hosted Mac mini runner) on PATH:
+  Homebrew (protoc, pnpm), rustup/cargo, and Node via fnm. Nothing is downloaded, so
+  jobs start warm. Fails early with a clear message if a tool is missing.
+inputs:
+  node-version:
+    description: Node major version fnm should use
+    default: "24"
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      run: |
+        set -euo pipefail
+        for p in /opt/homebrew/bin /opt/homebrew/sbin "$HOME/.cargo/bin" "$HOME/.local/bin"; do
+          [ -d "$p" ] && echo "$p" >> "$GITHUB_PATH"
+          export PATH="$p:$PATH"
+        done
+        if command -v fnm >/dev/null; then
+          fnm install "${{ inputs.node-version }}" >/dev/null 2>&1 || true
+          node_bin="$(dirname "$(fnm exec --using="${{ inputs.node-version }}" -- which node)")"
+          echo "$node_bin" >> "$GITHUB_PATH"
+          export PATH="$node_bin:$PATH"
+        fi
+        for tool in node pnpm cargo protoc; do
+          command -v "$tool" >/dev/null || { echo "::error::$tool is not installed on this runner"; exit 1; }
+        done
+        echo "node $(node --version) · pnpm $(pnpm --version) · $(cargo --version) · $(protoc --version)"
+        # Release builds on Apple's linker choke on Rust LTO bitcode (same as upstream's workflow).
+        echo "CARGO_PROFILE_RELEASE_LTO=false" >> "$GITHUB_ENV"
+        # pnpm 12 ignores the old "pnpm.onlyBuiltDependencies" field; don't fail installs on it.
+        echo "npm_config_strict_dep_builds=false" >> "$GITHUB_ENV"

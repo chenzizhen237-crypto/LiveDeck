@@ -1,0 +1,41 @@
+name: CI
+
+# Runs on Jimmy (self-hosted Mac mini, label "livedeck"): frontend typecheck + build,
+# frontend unit tests, and the backend's Rust tests. Same checks as `jimmy-test ci`.
+on:
+  push:
+    branches: [main, livedeck-next]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    # This is a public repo: never run pull requests from forks on the self-hosted Mac.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: [self-hosted, macOS, ARM64, livedeck]
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ./.github/actions/jimmy-toolchain
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Frontend typecheck + build
+        run: pnpm build
+
+      - name: Frontend unit tests
+        working-directory: web
+        run: pnpm test
+
+      - name: Rust tests
+        working-directory: src-tauri
+        run: cargo test

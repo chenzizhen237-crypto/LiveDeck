@@ -1,0 +1,98 @@
+name: Release
+
+# Push a tag like v0.2.0 (matching src-tauri/tauri.conf.json "version") to build LiveDeck on
+# Jimmy (Apple Silicon) and publish a GitHub release with the .dmg and the zipped .app.
+# The app isn't signed or notarized yet; the release notes say how to open it.
+on:
+  push:
+    tags: ["v*.*.*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing tag to (re)build and publish, e.g. v0.2.0
+        required: true
+
+concurrency:
+  group: release-${{ github.event.inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  macos:
+    runs-on: [self-hosted, macOS, ARM64, livedeck]
+    timeout-minutes: 90
+    env:
+      TAG: ${{ github.event.inputs.tag || github.ref_name }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TAG }}
+          fetch-depth: 0
+
+      - uses: ./.github/actions/jimmy-toolchain
+
+      - name: Check tag matches the app version
+        run: |
+          app_version="$(node -p "require('./src-tauri/tauri.conf.json').version")"
+          if [ "v$app_version" != "$TAG" ]; then
+            echo "::error::Tag $TAG does not match tauri.conf.json version $app_version"
+            exit 1
+          fi
+          echo "VERSION=$app_version" >> "$GITHUB_ENV"
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Tests
+        run: |
+          (cd web && pnpm test)
+          (cd src-tauri && cargo test)
+
+      - name: Build app and dmg
+        run: pnpm tauri build --bundles app,dmg
+
+      - name: Collect artifacts
+        run: |
+          set -euo pipefail
+          bundle=src-tauri/target/release/bundle
+          mkdir -p dist-release
+          dmg="$(ls "$bundle"/dmg/*.dmg | head -1)"
+          cp "$dmg" "dist-release/LiveDeck_${VERSION}_aarch64.dmg"
+          ditto -c -k --keepParent "$bundle/macos/LiveDeck.app" "dist-release/LiveDeck_${VERSION}_aarch64.app.zip"
+          (cd dist-release && shasum -a 256 * > SHA256SUMS.txt)
+          ls -la dist-release
+
+      - name: Release notes
+        run: |
+          set -euo pipefail
+          prev="$(git describe --tags --abbrev=0 "$TAG^" 2>/dev/null || true)"
+          {
+            echo "## LiveDeck $VERSION"
+            echo
+            echo "macOS (Apple Silicon). Built on the self-hosted runner from \`$TAG\`."
+            echo
+            echo "> Not signed or notarized yet. After moving LiveDeck to Applications, right-click → Open the first time,"
+            echo "> or run \`xattr -dr com.apple.quarantine /Applications/LiveDeck.app\`."
+            echo
+            echo "### Changes"
+            if [ -n "$prev" ]; then
+              git log --no-merges --pretty='- %s' "$prev..$TAG"
+            else
+              git log --no-merges --pretty='- %s' -n 40 "$TAG"
+            fi
+          } > release-notes.md
+          cat release-notes.md
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" dist-release/* --clobber
+            gh release edit "$TAG" --notes-file release-notes.md
+          else
+            gh release create "$TAG" dist-release/* --title "LiveDeck $VERSION" --notes-file release-notes.md
+          fi
