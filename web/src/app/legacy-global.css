@@ -204,45 +204,48 @@ body {
   overflow: hidden;
 }
 
-:where(button, input, textarea, select) {
-  font: inherit;
-  color: inherit;
-}
+/* Element resets live in the base layer so Tailwind utilities can override them. */
+@layer base {
+  :where(button, input, textarea, select) {
+    font: inherit;
+    color: inherit;
+  }
 
-:where(a, button, [role="button"], input, textarea, select, summary) {
-  transition:
-    background-color var(--dur-3) var(--ease-out),
-    color var(--dur-2) var(--ease-out),
-    border-color var(--dur-3) var(--ease-out),
-    transform var(--dur-2) var(--ease-out),
-    opacity var(--dur-2) var(--ease-out);
-}
+  :where(a, button, [role="button"], input, textarea, select, summary) {
+    transition:
+      background-color var(--dur-3) var(--ease-out),
+      color var(--dur-2) var(--ease-out),
+      border-color var(--dur-3) var(--ease-out),
+      transform var(--dur-2) var(--ease-out),
+      opacity var(--dur-2) var(--ease-out);
+  }
 
-:focus-visible {
-  outline: 2px solid color-mix(in srgb, var(--accent) 65%, transparent);
-  outline-offset: 2px;
-}
+  :focus-visible {
+    outline: 2px solid color-mix(in srgb, var(--accent) 65%, transparent);
+    outline-offset: 2px;
+  }
 
-button:not(.button):not([data-slot="button"]) {
-  border: none;
-  background: none;
-  cursor: pointer;
-  font-family: inherit;
-  outline: none;
-  -webkit-tap-highlight-color: transparent;
-}
+  button:not(.button):not([data-slot="button"]) {
+    border: none;
+    background: none;
+    cursor: pointer;
+    font-family: inherit;
+    outline: none;
+    -webkit-tap-highlight-color: transparent;
+  }
 
-a {
-  text-decoration: none;
-  color: inherit;
-}
+  a {
+    text-decoration: none;
+    color: inherit;
+  }
 
-a:hover {
-  color: var(--accent);
-}
+  a:hover {
+    color: var(--accent);
+  }
 
-ul {
-  list-style: none;
+  ul {
+    list-style: none;
+  }
 }
 
 ::-webkit-scrollbar {
