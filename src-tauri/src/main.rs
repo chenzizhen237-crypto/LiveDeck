@@ -2,12 +2,12 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 use reqwest;
+use std::collections::HashMap;
 use std::panic;
 use std::env;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tokio::sync::oneshot;
-#[cfg(target_os = "macos")]
 use tauri::Manager;
 use tauri_plugin_opener::OpenerExt;
 mod logging;
@@ -33,12 +33,48 @@ use platforms::huya::stop_huya_danmaku_listener;
 use platforms::huya::{fetch_huya_live_list, start_huya_danmaku_listener};
 // use platforms::huya::get_huya_stream_url_with_quality; // removed in favor of unified cmd
 
+/// One proxied upstream stream.
 #[derive(Default, Clone)]
-pub struct StreamUrlStore {
-    pub url: Arc<Mutex<String>>,
+pub struct StreamEntry {
+    pub url: String,
     /// 斗鱼直链 300 秒后会被 CDN 主动断开，代理层据此提前续流。
     /// 仅斗鱼会设置；其余平台保持 None，代理保持原有的一次性直通行为。
-    pub renew: Arc<Mutex<Option<flv_relay::StreamRenewContext>>>,
+    pub renew: Option<flv_relay::StreamRenewContext>,
+}
+
+/// Upstream streams served by the local proxy, keyed by room
+/// (e.g. "douyu-138243"). Callers that pass no key share `DEFAULT_KEY`,
+/// which keeps upstream's single-stream behaviour working.
+#[derive(Default, Clone)]
+pub struct StreamUrlStore {
+    pub streams: Arc<Mutex<HashMap<String, StreamEntry>>>,
+}
+
+impl StreamUrlStore {
+    pub const DEFAULT_KEY: &'static str = "default";
+
+    pub fn key_or_default(key: Option<String>) -> String {
+        key.filter(|k| !k.trim().is_empty()).unwrap_or_else(|| Self::DEFAULT_KEY.to_string())
+    }
+
+    /// Sets the upstream URL for `key`; a new URL clears any renew context.
+    pub fn set_url(&self, key: &str, url: String) {
+        self.streams.lock().unwrap().insert(key.to_string(), StreamEntry { url, renew: None });
+    }
+
+    pub fn set_renew(&self, key: &str, renew: Option<flv_relay::StreamRenewContext>) {
+        if let Some(entry) = self.streams.lock().unwrap().get_mut(key) {
+            entry.renew = renew;
+        }
+    }
+
+    pub fn get(&self, key: &str) -> Option<StreamEntry> {
+        self.streams.lock().unwrap().get(key).cloned()
+    }
+
+    pub fn remove(&self, key: &str) {
+        self.streams.lock().unwrap().remove(key);
+    }
 }
 
 // State for managing Douyu danmaku listener handles (stop signals)
@@ -85,16 +121,12 @@ async fn get_stream_url_with_quality_cmd(
 #[tauri::command]
 async fn set_stream_url_cmd(
     url: String,
+    key: Option<String>,
     state: tauri::State<'_, StreamUrlStore>,
 ) -> Result<(), String> {
-    {
-        let mut current_url = state.url.lock().unwrap();
-        *current_url = url;
-    }
     // 换流即失效：需要续流的平台会在此之后显式调用 set_stream_renew_cmd，
     // 这样未适配的平台默认拿不到续流上下文，行为与改造前一致。
-    let mut renew = state.renew.lock().unwrap();
-    *renew = None;
+    state.set_url(&StreamUrlStore::key_or_default(key), url);
     Ok(())
 }
 
@@ -105,10 +137,10 @@ async fn set_stream_renew_cmd(
     room_id: String,
     quality: String,
     line: Option<String>,
+    key: Option<String>,
     state: tauri::State<'_, StreamUrlStore>,
 ) -> Result<(), String> {
-    let mut renew = state.renew.lock().unwrap();
-    *renew = if room_id.is_empty() {
+    let renew = if room_id.is_empty() {
         None
     } else {
         Some(flv_relay::StreamRenewContext {
@@ -117,6 +149,7 @@ async fn set_stream_renew_cmd(
             line,
         })
     };
+    state.set_renew(&StreamUrlStore::key_or_default(key), renew);
     Ok(())
 }
 
@@ -222,6 +255,9 @@ fn main() {
         .expect("Failed to create reqwest client");
     let follow_http_client = FollowHttpClient::new().expect("Failed to create follow http client");
 
+    let stream_store = StreamUrlStore::default();
+    let proxy_store = stream_store.clone();
+
     tauri::Builder::default()
             .plugin(tauri_plugin_os::init())
             .plugin(tauri_plugin_opener::init())
@@ -232,7 +268,10 @@ fn main() {
                         | tauri_plugin_window_state::StateFlags::MAXIMIZED
                 )
                 .build())
-            .setup(|_app| {
+            .setup(move |_app| {
+                // One local proxy for the app's lifetime, on a free loopback port.
+                    _app.manage(proxy::ProxyServer::spawn(proxy_store.clone())?);
+
                 // Apply macOS vibrancy to the main window when running on macOS
                 #[cfg(target_os = "macos")]
                 {
@@ -252,8 +291,7 @@ fn main() {
             .manage(DouyinDanmakuState::default()) // Manage DouyinDanmakuState
             .manage(HuyaDanmakuState::default()) // Manage HuyaDanmakuState
             .manage(platforms::common::BilibiliDanmakuState::default()) // Manage BilibiliDanmakuState
-            .manage(StreamUrlStore::default())
-            .manage(proxy::ProxyServerHandle::default())
+            .manage(stream_store.clone())
             .manage(platforms::bilibili::state::BilibiliState::default())
             .manage(lan_sync::LanSyncServerState::default())
             .invoke_handler(tauri::generate_handler![

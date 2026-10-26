@@ -1,4 +1,4 @@
-use actix_web::{dev::ServerHandle, web, App, HttpRequest, HttpResponse, HttpServer, Responder};
+use actix_web::{web, App, HttpRequest, HttpResponse, HttpServer, Responder};
 use bytes::Bytes;
 use futures_util::TryStreamExt;
 use reqwest::Client;
@@ -6,25 +6,78 @@ use reqwest::Client;
 use crate::flv_relay;
 use crate::StreamUrlStore;
 use serde::Deserialize;
-use std::io::ErrorKind;
-use std::net::TcpStream;
-use std::sync::Mutex as StdMutex;
 use std::time::Duration;
-use tauri::{AppHandle, State};
+use tauri::State;
 use tokio::sync::mpsc;
 
-// Define a struct to hold the server handle in a Tauri managed state
-#[derive(Default)]
-pub struct ProxyServerHandle(pub StdMutex<Option<ServerHandle>>);
+/// The local proxy. Started once at launch on an OS-assigned loopback port
+/// (upstream used fixed ports 34719/34721 and rebuilt the server per stream).
+pub struct ProxyServer {
+    port: u16,
+}
+
+impl ProxyServer {
+    pub fn base_url(&self) -> String {
+        format!("http://127.0.0.1:{}", self.port)
+    }
+
+    /// Proxy URL for a stream key; the default key keeps upstream's `/live.flv`.
+    pub fn stream_url(&self, key: &str) -> String {
+        if key == StreamUrlStore::DEFAULT_KEY {
+            format!("{}/live.flv", self.base_url())
+        } else {
+            format!("{}/live/{}.flv", self.base_url(), key)
+        }
+    }
+
+    pub fn spawn(store: StreamUrlStore) -> std::io::Result<Self> {
+        let store_data = web::Data::new(store);
+        let server = HttpServer::new(move || {
+            App::new()
+                .app_data(store_data.clone())
+                .app_data(web::Data::new(build_client()))
+                .wrap(actix_cors::Cors::permissive())
+                .route("/live.flv", web::get().to(default_flv_handler))
+                .route("/live/{key}.flv", web::get().to(keyed_flv_handler))
+                .route("/image", web::get().to(image_proxy_handler))
+        })
+        .keep_alive(Duration::from_secs(120))
+        .bind(("127.0.0.1", 0))?;
+        let port = server
+            .addrs()
+            .first()
+            .map(|a| a.port())
+            .ok_or_else(|| std::io::Error::other("proxy bound to no address"))?;
+        let server = server.run();
+        tauri::async_runtime::spawn(async move {
+            if let Err(e) = server.await {
+                eprintln!("[Rust/proxy.rs] Proxy server run error: {}", e);
+            }
+        });
+        println!("[Rust/proxy.rs] Proxy listening on 127.0.0.1:{}", port);
+        Ok(Self { port })
+    }
+}
+
+fn build_client() -> Client {
+    Client::builder()
+        .no_proxy()
+        .http1_only()
+        .gzip(false)
+        .brotli(false)
+        .no_deflate()
+        .pool_idle_timeout(None)
+        .pool_max_idle_per_host(4)
+        .tcp_keepalive(Duration::from_secs(60))
+        .timeout(Duration::from_secs(7200))
+        .build()
+        .expect("failed to build client")
+}
 
 // Align with pure_live-master's Huya playback UA
 const HUYA_HYSDK_UA: &str =
     "HYSDK(Windows,30000002)_APP(pc_exe&7080000&official)_SDK(trans&2.34.0.5795)";
 
-async fn find_free_port() -> u16 {
-    // Using a fixed port as requested by the user for easier debugging
-    34719
-}
 
 #[derive(Deserialize)]
 struct ImageQuery {
@@ -122,18 +175,29 @@ async fn image_proxy_handler(
 
 const DEFAULT_STREAM_UA: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
 
-// Your actual proxy logic - this is a simplified placeholder
-async fn flv_proxy_handler(
+async fn default_flv_handler(
     _req: HttpRequest,
     stream_url_store: web::Data<StreamUrlStore>,
     client: web::Data<Client>,
-) -> impl Responder {
-    let url = stream_url_store.url.lock().unwrap().clone();
-    if url.is_empty() {
-        return HttpResponse::NotFound().body("Stream URL is not set or empty.");
-    }
+) -> HttpResponse {
+    flv_proxy_handler(StreamUrlStore::DEFAULT_KEY, &stream_url_store, &client).await
+}
+
+async fn keyed_flv_handler(
+    path: web::Path<String>,
+    stream_url_store: web::Data<StreamUrlStore>,
+    client: web::Data<Client>,
+) -> HttpResponse {
+    flv_proxy_handler(&path.into_inner(), &stream_url_store, &client).await
+}
+
+async fn flv_proxy_handler(key: &str, stream_url_store: &StreamUrlStore, client: &Client) -> HttpResponse {
+    let Some(entry) = stream_url_store.get(key).filter(|e| !e.url.is_empty()) else {
+        return HttpResponse::NotFound().body(format!("Stream URL for '{}' is not set.", key));
+    };
+    let url = entry.url;
     // 仅斗鱼会登记续流上下文；为空时 relay 退化为一次性直通，行为与改造前一致。
-    let renew_ctx = stream_url_store.renew.lock().unwrap().clone();
+    let renew_ctx = entry.renew;
 
     println!(
         "[Rust/proxy.rs handler] Incoming FLV proxy request -> {} (renew: {})",
@@ -143,7 +207,7 @@ async fn flv_proxy_handler(
 
     // 首次连接同步完成，便于把上游的错误状态原样透传给前端。
     let first_body =
-        match flv_relay::open_stream(&client, &url, DEFAULT_STREAM_UA, HUYA_HYSDK_UA).await {
+        match flv_relay::open_stream(client, &url, DEFAULT_STREAM_UA, HUYA_HYSDK_UA).await {
             Ok(body) => body,
             Err(flv_relay::OpenError::Status { status, body }) => {
                 eprintln!(
@@ -175,7 +239,7 @@ async fn flv_proxy_handler(
         tx,
         first_body,
         renew_ctx,
-        client.get_ref().clone(),
+        client.clone(),
         DEFAULT_STREAM_UA.to_string(),
         HUYA_HYSDK_UA.to_string(),
     ));
@@ -196,168 +260,96 @@ async fn flv_proxy_handler(
         .streaming(byte_stream)
 }
 
+/// Returns the proxy URL for a stream registered with `set_stream_url_cmd`.
+/// The server is already running; this no longer restarts it.
 #[tauri::command]
 pub async fn start_proxy(
-    _app_handle: AppHandle,
-    server_handle_state: State<'_, ProxyServerHandle>,
+    key: Option<String>,
+    proxy: State<'_, ProxyServer>,
     stream_url_store: State<'_, StreamUrlStore>,
 ) -> Result<String, String> {
-    let port = find_free_port().await;
-    let current_stream_url = stream_url_store.url.lock().unwrap().clone();
-
-    if current_stream_url.is_empty() {
+    let key = StreamUrlStore::key_or_default(key);
+    if stream_url_store.get(&key).filter(|e| !e.url.is_empty()).is_none() {
         return Err("Stream URL is not set in store. Cannot start proxy.".to_string());
     }
-
-    // stream_url_data_for_actix can be created once and cloned, as StreamUrlStore is Arc based and Send + Sync
-    let stream_url_data_for_actix = web::Data::new(stream_url_store.inner().clone());
-    // REMOVED: let awc_client_for_actix = web::Data::new(Client::default());
-
-    // Ensure MutexGuard is dropped before .await
-    let existing_handle_to_stop = { server_handle_state.0.lock().unwrap().take() };
-    if let Some(existing_handle) = existing_handle_to_stop {
-        existing_handle.stop(false).await;
-    }
-
-    let server = match HttpServer::new(move || {
-        let app_data_stream_url = stream_url_data_for_actix.clone();
-        // Create reqwest::Client inside the closure for each worker thread (for images)
-        let app_data_reqwest_client = web::Data::new(
-            Client::builder()
-                .no_proxy()
-                .http1_only()
-                .gzip(false)
-                .brotli(false)
-                .no_deflate()
-                .pool_idle_timeout(None)
-                .pool_max_idle_per_host(4)
-                .tcp_keepalive(Duration::from_secs(60))
-                .timeout(Duration::from_secs(7200))
-                .build()
-                .expect("failed to build client"),
-        );
-        App::new()
-            .app_data(app_data_stream_url)
-            .app_data(app_data_reqwest_client)
-            .wrap(actix_cors::Cors::permissive())
-            .route("/live.flv", web::get().to(flv_proxy_handler))
-            .route("/image", web::get().to(image_proxy_handler))
-    })
-    .keep_alive(Duration::from_secs(120))
-    .bind(("127.0.0.1", port))
-    {
-        Ok(srv) => srv,
-        Err(e) => {
-            let err_msg = format!(
-                "[Rust/proxy.rs] Failed to bind server to port {}: {}",
-                port, e
-            );
-            eprintln!("{}", err_msg);
-            return Err(err_msg);
-        }
-    }
-    .run();
-
-    let server_handle_for_state = server.handle();
-    *server_handle_state.0.lock().unwrap() = Some(server_handle_for_state);
-
-    // Use tauri::async_runtime::spawn directly
-    tauri::async_runtime::spawn(async move {
-        if let Err(e) = server.await {
-            eprintln!("[Rust/proxy.rs] Proxy server run error: {}", e);
-        } else {
-            println!("[Rust/proxy.rs] Proxy server on port {} shut down.", port);
-        }
-    });
-
-    let proxy_url = format!("http://127.0.0.1:{}/live.flv", port);
-    Ok(proxy_url)
+    Ok(proxy.stream_url(&key))
 }
 
+/// Base URL for `/image` proxying. Kept for the frontend's existing calls.
 #[tauri::command]
-pub async fn start_static_proxy_server(
-    _app_handle: AppHandle,
-    stream_url_store: State<'_, StreamUrlStore>,
-) -> Result<String, String> {
-    // Use a dedicated port for static image proxy to avoid interfering with FLV stream proxy
-    let port: u16 = 34721;
-
-    // If the server is already running, just return the base URL (idempotent behavior)
-    if TcpStream::connect(("127.0.0.1", port)).is_ok() {
-        return Ok(format!("http://127.0.0.1:{}", port));
-    }
-
-    let stream_url_data_for_actix = web::Data::new(stream_url_store.inner().clone());
-
-    let server = match HttpServer::new(move || {
-        let app_data_stream_url = stream_url_data_for_actix.clone();
-        let app_data_reqwest_client = web::Data::new(
-            Client::builder()
-                .no_proxy()
-                .http1_only()
-                .gzip(false)
-                .brotli(false)
-                .no_deflate()
-                .pool_idle_timeout(None)
-                .pool_max_idle_per_host(4)
-                .tcp_keepalive(Duration::from_secs(60))
-                .timeout(Duration::from_secs(7200))
-                .build()
-                .expect("failed to build client"),
-        );
-        App::new()
-            .app_data(app_data_stream_url)
-            .app_data(app_data_reqwest_client)
-            .wrap(actix_cors::Cors::permissive())
-            .route("/live.flv", web::get().to(flv_proxy_handler))
-            .route("/image", web::get().to(image_proxy_handler))
-    })
-    .keep_alive(Duration::from_secs(120))
-    .bind(("127.0.0.1", port))
-    {
-        Ok(srv) => srv,
-        Err(e) => {
-            // If address already in use, assume server is running and return OK base URL
-            if e.kind() == ErrorKind::AddrInUse {
-                eprintln!(
-                    "[Rust/proxy.rs] Port {} already in use; assuming static proxy running.",
-                    port
-                );
-                return Ok(format!("http://127.0.0.1:{}", port));
-            }
-            let err_msg = format!(
-                "[Rust/proxy.rs] Failed to bind server to port {}: {}",
-                port, e
-            );
-            eprintln!("{}", err_msg);
-            return Err(err_msg);
-        }
-    }
-    .run();
-
-    // Do NOT overwrite the main proxy server handle; run static proxy independently
-
-    tauri::async_runtime::spawn(async move {
-        if let Err(e) = server.await {
-            eprintln!("[Rust/proxy.rs] Proxy server run error: {}", e);
-        } else {
-            println!("[Rust/proxy.rs] Proxy server on port {} shut down.", port);
-        }
-    });
-
-    Ok(format!("http://127.0.0.1:{}", port))
+pub async fn start_static_proxy_server(proxy: State<'_, ProxyServer>) -> Result<String, String> {
+    Ok(proxy.base_url())
 }
 
+/// Unregisters a stream. The server stays up (it also serves images and other rooms).
 #[tauri::command]
-pub async fn stop_proxy(server_handle_state: State<'_, ProxyServerHandle>) -> Result<(), String> {
-    // Ensure MutexGuard is dropped before .await
-    let handle_to_stop = { server_handle_state.0.lock().unwrap().take() };
-
-    if let Some(handle) = handle_to_stop {
-        handle.stop(false).await; // Changed to non-graceful shutdown
-        println!("[Rust/proxy.rs] stop_proxy: Initiated non-graceful shutdown.");
-    } else {
-        println!("[Rust/proxy.rs] stop_proxy command: No proxy server was running or handle already taken.");
-    }
+pub async fn stop_proxy(key: Option<String>, stream_url_store: State<'_, StreamUrlStore>) -> Result<(), String> {
+    stream_url_store.remove(&StreamUrlStore::key_or_default(key));
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn store_keys_are_independent() {
+        let store = StreamUrlStore::default();
+        store.set_url("douyu-1", "https://a.example/1.flv".into());
+        store.set_url("huya-2", "https://b.example/2.flv".into());
+        assert_eq!(store.get("douyu-1").unwrap().url, "https://a.example/1.flv");
+        assert_eq!(store.get("huya-2").unwrap().url, "https://b.example/2.flv");
+
+        store.remove("douyu-1");
+        assert!(store.get("douyu-1").is_none());
+        assert!(store.get("huya-2").is_some(), "removing one room must not touch another");
+    }
+
+    #[test]
+    fn missing_or_blank_key_falls_back_to_default() {
+        assert_eq!(StreamUrlStore::key_or_default(None), StreamUrlStore::DEFAULT_KEY);
+        assert_eq!(StreamUrlStore::key_or_default(Some("  ".into())), StreamUrlStore::DEFAULT_KEY);
+        assert_eq!(StreamUrlStore::key_or_default(Some("douyu-9".into())), "douyu-9");
+    }
+
+    #[test]
+    fn new_url_clears_renew_context() {
+        let store = StreamUrlStore::default();
+        store.set_url("k", "https://a.example/1.flv".into());
+        store.set_renew(
+            "k",
+            Some(flv_relay::StreamRenewContext {
+                room_id: "1".into(),
+                quality: "原画".into(),
+                line: None,
+            }),
+        );
+        assert!(store.get("k").unwrap().renew.is_some());
+        store.set_url("k", "https://a.example/2.flv".into());
+        assert!(store.get("k").unwrap().renew.is_none());
+    }
+
+    #[test]
+    fn stream_urls_keep_legacy_path_for_default_key() {
+        let proxy = ProxyServer { port: 4000 };
+        assert_eq!(proxy.stream_url(StreamUrlStore::DEFAULT_KEY), "http://127.0.0.1:4000/live.flv");
+        assert_eq!(proxy.stream_url("douyu-1"), "http://127.0.0.1:4000/live/douyu-1.flv");
+    }
+
+    #[test]
+    fn server_binds_a_free_port_and_routes_by_key() {
+        tauri::async_runtime::block_on(async {
+            let store = StreamUrlStore::default();
+            let a = ProxyServer::spawn(store.clone()).expect("spawn a");
+            let b = ProxyServer::spawn(store.clone()).expect("spawn b");
+            assert_ne!(a.port, 0);
+            assert_ne!(a.port, b.port, "each server gets its own OS-assigned port");
+
+            let client = reqwest::Client::builder().no_proxy().build().unwrap();
+            let res = client.get(a.stream_url("nope")).send().await.unwrap();
+            assert_eq!(res.status(), reqwest::StatusCode::NOT_FOUND);
+            let res = client.get(a.stream_url(StreamUrlStore::DEFAULT_KEY)).send().await.unwrap();
+            assert_eq!(res.status(), reqwest::StatusCode::NOT_FOUND);
+        });
+    }
 }

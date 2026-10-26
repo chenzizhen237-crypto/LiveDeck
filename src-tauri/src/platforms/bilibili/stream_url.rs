@@ -1,16 +1,15 @@
 use reqwest::header::{HeaderMap, HeaderValue, COOKIE, REFERER, USER_AGENT};
 use serde_json::Value;
-use tauri::{command, AppHandle, State};
+use tauri::{command, State};
 
 use crate::platforms::common::types::StreamVariant;
-use crate::proxy::{start_proxy, ProxyServerHandle};
+use crate::proxy::ProxyServer;
 use crate::StreamUrlStore;
 
 #[command]
 pub async fn get_bilibili_live_stream_url_with_quality(
-    app_handle: AppHandle,
     stream_url_store: State<'_, StreamUrlStore>,
-    proxy_server_handle: State<'_, ProxyServerHandle>,
+    proxy: State<'_, ProxyServer>,
     payload: crate::platforms::common::GetStreamUrlPayload,
     quality: String,
     cookie: Option<String>,
@@ -488,22 +487,13 @@ pub async fn get_bilibili_live_stream_url_with_quality(
         }
     };
 
+    // Each room gets its own proxy entry, so two Bilibili rooms can play at once.
+    let stream_key = format!("bilibili-{}", room_id.trim());
     match selected_stream {
         SelectedStream::Flv(real_url) => {
-            // FLV：写入到 Store 并启动代理
-            let proxied_url = {
-                {
-                    let mut current_url_in_store = stream_url_store.url.lock().unwrap();
-                    *current_url_in_store = real_url.clone();
-                }
-                match start_proxy(app_handle, proxy_server_handle, stream_url_store).await {
-                    Ok(proxy) => Some(proxy),
-                    Err(e) => {
-                        eprintln!("[Bilibili] Failed to start proxy: {}", e);
-                        None
-                    }
-                }
-            };
+            // FLV：写入到 Store，经本地代理播放
+            stream_url_store.set_url(&stream_key, real_url.clone());
+            let proxied_url = Some(proxy.stream_url(&stream_key));
 
             let final_error_message = if proxied_url.is_none() {
                 Some("代理启动失败".to_string())
@@ -525,18 +515,8 @@ pub async fn get_bilibili_live_stream_url_with_quality(
             })
         }
         SelectedStream::Hls(real_url) => {
-            // HLS：无需本地代理，若存在旧的 FLV 代理则关闭并清空存储
-            {
-                let handle_to_stop = { proxy_server_handle.0.lock().unwrap().take() };
-                if let Some(handle) = handle_to_stop {
-                    handle.stop(false).await;
-                    eprintln!("[Bilibili] Stopped existing FLV proxy before using HLS stream");
-                }
-            }
-            {
-                let mut current_url_in_store = stream_url_store.url.lock().unwrap();
-                *current_url_in_store = String::new();
-            }
+            // HLS：无需本地代理，移除该房间旧的 FLV 条目
+            stream_url_store.remove(&stream_key);
 
             Ok(crate::platforms::common::LiveStreamInfo {
                 title: init_json["data"]["title"].as_str().map(|s| s.to_string()),

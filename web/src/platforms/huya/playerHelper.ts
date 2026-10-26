@@ -7,7 +7,9 @@ import { logger } from '@/utils/logger';
 
 export interface HuyaUnifiedEntry { quality: string; bitRate: number; url: string; }
 
-let huyaProxyActive = false;
+// Proxy keys this helper registered; the backend keeps one entry per room.
+const huyaProxyKeys = new Set<string>();
+const huyaKey = (roomId: string) => `huya-${roomId}`;
 
 export async function getHuyaStreamConfig(
   roomId: string,
@@ -39,15 +41,15 @@ export async function getHuyaStreamConfig(
         // 对齐 pure_live：虎牙播放需要稳定的 UA/Referer/Origin；WebView 无法给 FLV 请求加自定义 Header，走本地 proxy 注入。
         let finalStreamUrl = sanitizedUpstream;
         try {
-          await invoke('set_stream_url_cmd', { url: sanitizedUpstream });
-          const proxyUrl = await invoke<string>('start_proxy');
+          const key = huyaKey(roomId);
+          await invoke('set_stream_url_cmd', { url: sanitizedUpstream, key });
+          const proxyUrl = await invoke<string>('start_proxy', { key });
           if (proxyUrl) {
             finalStreamUrl = proxyUrl;
-            huyaProxyActive = true;
+            huyaProxyKeys.add(key);
           }
         } catch {
           // proxy 非关键：失败则回退直连（避免阻断播放），但可能更容易断流
-          huyaProxyActive = false;
         }
 
         return {
@@ -88,14 +90,16 @@ export async function getHuyaStreamConfig(
   throw new Error('主播未开播或无法获取直播流');
 }
 
-export async function stopHuyaProxy(): Promise<void> {
-  if (!huyaProxyActive) return;
-  try {
-    await invoke('stop_proxy');
-  } catch {
-    // ignore
-  } finally {
-    huyaProxyActive = false;
+/** Unregisters one room's stream, or every Huya stream this helper registered. */
+export async function stopHuyaProxy(roomId?: string): Promise<void> {
+  const keys = roomId ? [huyaKey(roomId)] : [...huyaProxyKeys];
+  for (const key of keys) {
+    huyaProxyKeys.delete(key);
+    try {
+      await invoke('stop_proxy', { key });
+    } catch {
+      // ignore
+    }
   }
 }
 

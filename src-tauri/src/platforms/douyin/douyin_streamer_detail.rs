@@ -6,7 +6,7 @@ use crate::platforms::douyin::web_api::{
     choose_flv_stream, fetch_room_data, normalize_douyin_live_id, DouyinRoomData,
     DEFAULT_USER_AGENT,
 };
-use crate::proxy::ProxyServerHandle;
+use crate::proxy::ProxyServer;
 use crate::StreamUrlStore;
 use regex::Regex;
 use reqwest::header::{HeaderMap, HeaderValue, REFERER, USER_AGENT};
@@ -20,7 +20,7 @@ const QUALITY_UHD: &str = "UHD";
 pub async fn get_douyin_live_stream_url(
     app_handle: AppHandle,
     stream_url_store: State<'_, StreamUrlStore>,
-    proxy_server_handle: State<'_, ProxyServerHandle>,
+    proxy_server_handle: State<'_, ProxyServer>,
     payload: GetStreamUrlPayload,
 ) -> Result<CommonLiveStreamInfo, String> {
     get_douyin_live_stream_url_with_quality(
@@ -37,7 +37,7 @@ pub async fn get_douyin_live_stream_url(
 pub async fn get_douyin_live_stream_url_with_quality(
     _app_handle: AppHandle,
     _stream_url_store: State<'_, StreamUrlStore>,
-    _proxy_server_handle: State<'_, ProxyServerHandle>,
+    _proxy_server_handle: State<'_, ProxyServer>,
     payload: GetStreamUrlPayload,
     quality: String,
 ) -> Result<CommonLiveStreamInfo, String> {

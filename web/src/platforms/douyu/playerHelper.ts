@@ -1,6 +1,8 @@
 import { invoke } from '@tauri-apps/api/core';
 
-let douyuProxyActive = false;
+// Proxy keys this helper registered; the backend keeps one entry per room.
+const douyuProxyKeys = new Set<string>();
+const douyuKey = (roomId: string) => `douyu-${roomId}`;
 
 export async function getDouyuStreamConfig(
   roomId: string,
@@ -57,32 +59,34 @@ export async function getDouyuStreamConfig(
   }
 
   try {
-    await invoke('set_stream_url_cmd', { url: finalStreamUrl });
+    const key = douyuKey(roomId);
+    await invoke('set_stream_url_cmd', { url: finalStreamUrl, key });
     // 斗鱼直链 300 秒后会被 CDN 主动断开，登记房间信息让代理层在到期前自行续流，
     // 否则播放器每 5 分钟就会停在最后一帧并显示「重播」。
     await invoke('set_stream_renew_cmd', {
       roomId: roomId,
       quality: quality,
       line: line ?? null,
+      key,
     });
-    const proxyUrl = await invoke<string>('start_proxy');
-    douyuProxyActive = true;
+    const proxyUrl = await invoke<string>('start_proxy', { key });
+    douyuProxyKeys.add(key);
     return { streamUrl: proxyUrl, streamType };
   } catch (e: any) {
     throw new Error(`设置斗鱼代理失败: ${e.message}`);
   }
 }
 
-export async function stopDouyuProxy(): Promise<void> {
-  if (!douyuProxyActive) {
-    return;
-  }
-  try {
-    await invoke('stop_proxy');
-    douyuProxyActive = false;
-  } catch (e) {
-    console.error('[DouyuPlayerHelper] Error stopping proxy server:', e);
-    douyuProxyActive = false;
+/** Unregisters one room's stream, or every Douyu stream this helper registered. */
+export async function stopDouyuProxy(roomId?: string): Promise<void> {
+  const keys = roomId ? [douyuKey(roomId)] : [...douyuProxyKeys];
+  for (const key of keys) {
+    douyuProxyKeys.delete(key);
+    try {
+      await invoke('stop_proxy', { key });
+    } catch (e) {
+      console.error('[DouyuPlayerHelper] Error stopping proxy stream:', e);
+    }
   }
 }
 

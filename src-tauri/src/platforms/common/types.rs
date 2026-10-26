@@ -58,12 +58,6 @@ pub struct LiveStreamInfo {
     pub web_rid: Option<String>,
 }
 
-#[derive(Default, Clone)]
-#[allow(dead_code)]
-pub struct StreamUrlStore {
-    pub url: std::sync::Arc<std::sync::Mutex<String>>,
-}
-
 // Moved from main.rs
 // State for the Douyin Danmaku listener
 #[derive(Default)]
