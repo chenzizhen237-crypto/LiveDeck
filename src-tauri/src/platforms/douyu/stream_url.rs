@@ -106,7 +106,11 @@ impl DouYu {
             "Accept-Language",
             HeaderValue::from_static("zh-CN,zh;q=0.9"),
         );
+        // Without deadlines a stalled Douyu API call left the player's reload
+        // (and the relay's renewal) waiting indefinitely.
         let client = Client::builder()
+            .connect_timeout(std::time::Duration::from_secs(8))
+            .timeout(std::time::Duration::from_secs(15))
             .redirect(Policy::limited(10))
             .no_proxy()
             .default_headers(default_headers)

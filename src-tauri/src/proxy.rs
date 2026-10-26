@@ -35,6 +35,7 @@ impl ProxyServer {
             App::new()
                 .app_data(store_data.clone())
                 .app_data(web::Data::new(build_client()))
+                .app_data(web::Data::new(ImageClient(build_image_client())))
                 .wrap(actix_cors::Cors::permissive())
                 .route("/live.flv", web::get().to(default_flv_handler))
                 .route("/live/{key}.flv", web::get().to(keyed_flv_handler))
@@ -83,16 +84,98 @@ struct ImageQuery {
     url: String,
 }
 
+/// Image fetches get their own client: short timeouts (the media client allows
+/// 2h reads) and redirects re-checked against the same address rules.
+pub struct ImageClient(Client);
+
+const IMAGE_MAX_BYTES: usize = 10 * 1024 * 1024;
+const IMAGE_MAX_CONCURRENT: usize = 8;
+
+fn image_permits() -> &'static tokio::sync::Semaphore {
+    static PERMITS: std::sync::OnceLock<tokio::sync::Semaphore> = std::sync::OnceLock::new();
+    PERMITS.get_or_init(|| tokio::sync::Semaphore::new(IMAGE_MAX_CONCURRENT))
+}
+
+/// Only public http(s) hosts: `/image` takes any URL from the page, so without
+/// this it could be pointed at localhost or the LAN.
+fn is_allowed_image_url(url: &url::Url) -> bool {
+    use std::net::IpAddr;
+    if !matches!(url.scheme(), "http" | "https") {
+        return false;
+    }
+    let ip_is_public = |ip: IpAddr| match ip {
+        IpAddr::V4(v4) => !(v4.is_loopback()
+            || v4.is_private()
+            || v4.is_link_local()
+            || v4.is_unspecified()
+            || v4.is_broadcast()
+            || v4.is_multicast()
+            || v4.octets()[0] == 100 && (v4.octets()[1] & 0xc0) == 64), // CGNAT 100.64/10
+        IpAddr::V6(v6) => !(v6.is_loopback()
+            || v6.is_unspecified()
+            || v6.is_multicast()
+            || (v6.segments()[0] & 0xfe00) == 0xfc00 // unique local
+            || (v6.segments()[0] & 0xffc0) == 0xfe80 // link local
+            || v6.to_ipv4_mapped().is_some_and(|v4| v4.is_loopback() || v4.is_private())),
+    };
+    match url.host() {
+        Some(url::Host::Ipv4(ip)) => ip_is_public(IpAddr::V4(ip)),
+        Some(url::Host::Ipv6(ip)) => ip_is_public(IpAddr::V6(ip)),
+        Some(url::Host::Domain(d)) => {
+            let d = d.trim_end_matches('.').to_ascii_lowercase();
+            !(d == "localhost" || d.ends_with(".localhost") || d.ends_with(".local") || d.ends_with(".internal"))
+        }
+        None => false,
+    }
+}
+
+/// Reads a body but gives up past `max` bytes (Content-Length can be absent or wrong).
+async fn read_capped(resp: reqwest::Response, max: usize) -> Result<bytes::Bytes, String> {
+    let mut body = bytes::BytesMut::new();
+    let mut stream = std::pin::pin!(resp.bytes_stream());
+    while let Some(chunk) = stream.try_next().await.map_err(|e| e.to_string())? {
+        if body.len() + chunk.len() > max {
+            return Err(format!("image larger than {} bytes", max));
+        }
+        body.extend_from_slice(&chunk);
+    }
+    Ok(body.freeze())
+}
+
+fn build_image_client() -> Client {
+    Client::builder()
+        .no_proxy()
+        .connect_timeout(Duration::from_secs(8))
+        .timeout(Duration::from_secs(20))
+        .redirect(reqwest::redirect::Policy::custom(|attempt| {
+            if attempt.previous().len() >= 5 || !is_allowed_image_url(attempt.url()) {
+                attempt.stop()
+            } else {
+                attempt.follow()
+            }
+        }))
+        .build()
+        .expect("failed to build image client")
+}
+
 async fn image_proxy_handler(
     query: web::Query<ImageQuery>,
-    client: web::Data<Client>,
+    client: web::Data<ImageClient>,
 ) -> impl Responder {
     let url = query.url.clone();
     if url.is_empty() {
         return HttpResponse::BadRequest().body("Missing url query parameter");
     }
+    match url::Url::parse(&url) {
+        Ok(parsed) if is_allowed_image_url(&parsed) => {}
+        _ => return HttpResponse::Forbidden().body("URL not allowed"),
+    }
+    let Ok(_permit) = image_permits().acquire().await else {
+        return HttpResponse::ServiceUnavailable().finish();
+    };
 
     let mut req = client
+        .0
         .get(&url)
         .header(
             "User-Agent",
@@ -127,7 +210,13 @@ async fn image_proxy_handler(
 
             // 为避免 Windows 下 chunked 传输的 Early-EOF，改为一次性读取 bytes 并返回
             if upstream_response.status().is_success() {
-                match upstream_response.bytes().await {
+                if upstream_response
+                    .content_length()
+                    .is_some_and(|len| len as usize > IMAGE_MAX_BYTES)
+                {
+                    return HttpResponse::PayloadTooLarge().finish();
+                }
+                match read_capped(upstream_response, IMAGE_MAX_BYTES).await {
                     Ok(bytes) => HttpResponse::Ok()
                         .content_type(content_type)
                         .insert_header(("Content-Length", bytes.len().to_string()))
@@ -290,6 +379,27 @@ pub async fn stop_proxy(key: Option<String>, stream_url_store: State<'_, StreamU
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn image_proxy_only_allows_public_http_hosts() {
+        let ok = |u: &str| is_allowed_image_url(&url::Url::parse(u).unwrap());
+        assert!(ok("https://i0.hdslb.com/bfs/live/cover.jpg"));
+        assert!(ok("http://8.8.8.8/a.png"));
+        for bad in [
+            "file:///etc/passwd",
+            "http://localhost:3000/",
+            "http://127.0.0.1:63386/live.flv",
+            "http://192.168.1.10/",
+            "http://10.0.0.1/",
+            "http://169.254.169.254/latest/meta-data",
+            "http://100.100.1.1/",
+            "http://[::1]/",
+            "http://[fd00::1]/",
+            "http://printer.local/",
+        ] {
+            assert!(!ok(bad), "{bad} should be rejected");
+        }
+    }
 
     #[test]
     fn store_keys_are_independent() {
