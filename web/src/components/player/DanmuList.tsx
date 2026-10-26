@@ -1,5 +1,3 @@
-"use client";
-
 import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 
 import "./DanmuList.css";

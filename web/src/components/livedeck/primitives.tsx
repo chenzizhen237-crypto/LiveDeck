@@ -1,5 +1,3 @@
-"use client";
-
 // Small building blocks shared by the LiveDeck UI (see the Components page in LiveDeck UI.nib).
 
 import React, { useState } from "react";

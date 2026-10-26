@@ -1,11 +1,9 @@
-"use client";
-
 // LiveDeck shell: no sidebar or navbar. The floating island handles platform,
 // category, search and open rooms; the follow trigger sits top-right; the
 // player opens as a full-window overlay underneath the island.
 
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
-import { usePathname, useRouter } from "next/navigation";
+import { usePathname, useRouter } from "@/router";
 import { AnimatePresence } from "framer-motion";
 
 import { DynamicIsland } from "@/components/livedeck/DynamicIsland";

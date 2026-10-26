@@ -1,5 +1,3 @@
-"use client";
-
 import React, { createContext, useContext, useEffect, useMemo, useState } from "react";
 
 type ThemePreference = "light" | "dark" | "system";

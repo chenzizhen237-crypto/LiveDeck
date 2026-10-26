@@ -1,5 +1,3 @@
-"use client";
-
 import { invoke } from "@tauri-apps/api/core";
 
 export type SearchPlatform = "douyu" | "huya" | "bilibili";

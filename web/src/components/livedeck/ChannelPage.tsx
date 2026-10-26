@@ -1,5 +1,3 @@
-"use client";
-
 // Channel screen (Desktop 01/02): breadcrumb, hero category title with favourite,
 // Douyu sub-category chips, and the infinite room grid.
 

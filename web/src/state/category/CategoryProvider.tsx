@@ -1,5 +1,3 @@
-"use client";
-
 // Port of the Vue `categoryStore`: one place that knows each platform's category
 // tree, the selected category per platform, and Douyu's third-level categories.
 // The island's category picker and the channel page both read from here.

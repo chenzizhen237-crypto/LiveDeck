@@ -1,5 +1,3 @@
-"use client";
-
 // Performance HUD (⌘⇧P). Measures frame pacing inside the real WebView so
 // danmaku/player changes can be judged in a live room, not just in a harness.
 // Also switches the danmaku engine for A/B (takes effect when a room reopens).

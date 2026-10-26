@@ -1,5 +1,3 @@
-"use client";
-
 export const LAN_SYNC_KIND = "dtv-lan-sync" as const;
 export const LAN_SYNC_VERSION = 1 as const;
 

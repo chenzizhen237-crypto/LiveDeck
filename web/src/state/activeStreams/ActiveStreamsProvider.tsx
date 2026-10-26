@@ -1,5 +1,3 @@
-"use client";
-
 // Port of the Vue `playerStore`: the rooms you've opened, shown as capsules in
 // the dynamic island. The backend plays one stream at a time, so only the
 // current room is playing; the others are shortcuts back to it.

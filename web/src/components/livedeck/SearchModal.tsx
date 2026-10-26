@@ -1,5 +1,3 @@
-"use client";
-
 // ⌘K search (Desktop 05): followed first, then anchors from each platform's
 // search, then categories. Arrow keys move, Enter opens, ⌘F toggles follow.
 

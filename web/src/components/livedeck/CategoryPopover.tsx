@@ -1,5 +1,3 @@
-"use client";
-
 // "浏览分类" picker (Desktop 03): platform tabs, category groups, favourites on top.
 
 import React, { useEffect, useState } from "react";

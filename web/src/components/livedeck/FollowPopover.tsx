@@ -1,5 +1,3 @@
-"use client";
-
 // Follow trigger (top-right) + popover (Desktop 04). Live streamers sort first,
 // platform chips filter, refresh fans out with limited concurrency, and a
 // streamer that flips to LIVE raises an island notification.

@@ -1,5 +1,3 @@
-"use client";
-
 // Follow-list status refresh, lifted out of the old FollowsList so the new
 // follow popover can share it. Calls the per-platform commands upstream uses.
 

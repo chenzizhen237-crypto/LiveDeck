@@ -1,5 +1,3 @@
-"use client";
-
 import React, { memo, useEffect, useState } from "react";
 import styles from "./SmoothImage.module.css";
 
@@ -52,7 +50,6 @@ export const SmoothImage = memo(function SmoothImage({
           </svg>
         </div>
       ) : null}
-      {/* eslint-disable-next-line @next/next/no-img-element */}
       <img
         key={imgKey}
         className={`${styles.img} ${loaded ? styles.imgLoaded : ""} ${className ?? ""}`}

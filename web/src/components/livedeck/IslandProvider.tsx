@@ -1,5 +1,3 @@
-"use client";
-
 // Queue of island notifications (state F: "went live"). Each shows for 5s.
 
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";

@@ -1,7 +1,5 @@
-"use client";
-
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter } from "@/router";
 import { invoke } from "@tauri-apps/api/core";
 import { v4 as uuidv4 } from "uuid";
 import { AnimatePresence, m } from "framer-motion";
@@ -1215,7 +1213,7 @@ export function MainPlayer({
         void stopAllDanmakuBackends();
         void stopAllProxies();
       };
-      if (process.env.NODE_ENV === "development") {
+      if (import.meta.env.DEV) {
         window.setTimeout(stopAll, 200);
       } else {
         stopAll();
@@ -1393,7 +1391,6 @@ export function MainPlayer({
                   <div className="player-topbar-streamer" title={playerTitle || roomId}>
                     <div className="player-topbar-avatar">
                       {playerAvatar ? (
-                        // eslint-disable-next-line @next/next/no-img-element
                         <img src={getAvatarSrc(platform, playerAvatar)} alt={playerAnchorName ?? roomId} />
                       ) : (
                         <div className="player-topbar-avatarFallback">{(playerAnchorName || roomId || "D").charAt(0).toUpperCase()}</div>

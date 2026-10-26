@@ -1,5 +1,3 @@
-"use client";
-
 // The floating island (Island motion page in LiveDeck UI.nib).
 //   Browse: D · Expanded at scroll 0, C · Compact once the page scrolls.
 //   Player: A · Rest (thin line) → B · Peek on hover → D · Expanded on click.

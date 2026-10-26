@@ -1,5 +1,3 @@
-"use client";
-
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { v4 as uuidv4 } from "uuid";
 

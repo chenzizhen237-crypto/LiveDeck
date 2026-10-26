@@ -1,6 +1,6 @@
 type LogArgs = unknown[];
 
-const isProd = process.env.NODE_ENV === "production";
+const isProd = import.meta.env.PROD;
 
 function safeConsole(method: "debug" | "info" | "warn" | "error", ...args: LogArgs) {
   // Some WebView environments may not have full console support.

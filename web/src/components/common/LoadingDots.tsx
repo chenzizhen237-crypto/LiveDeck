@@ -1,5 +1,3 @@
-"use client";
-
 import styles from "./LoadingDots.module.css";
 
 export function LoadingDots() {

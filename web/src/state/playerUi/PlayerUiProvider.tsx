@@ -1,5 +1,3 @@
-"use client";
-
 import React, { createContext, useCallback, useContext, useMemo, useRef, useState } from "react";
 
 import { Platform } from "@/platforms/common/types";

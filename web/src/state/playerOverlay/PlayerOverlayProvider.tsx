@@ -1,19 +1,13 @@
-"use client";
-
-import React, { useCallback, useContext, useEffect, useMemo, useState } from "react";
-import dynamic from "next/dynamic";
+import React, { Suspense, lazy, useCallback, useContext, useEffect, useMemo, useState } from "react";
 import { AnimatePresence, m } from "framer-motion";
 
 import styles from "./PlayerOverlayProvider.module.css";
 
-const PlayerPage = dynamic(() => import("@/screens/PlayerPage").then((m) => m.PlayerPage), {
-  ssr: false,
-  loading: () => (
-    <div style={{ padding: 18, color: "var(--secondary-text)", fontWeight: 700 }}>
-      加载播放器...
-    </div>
-  )
-});
+const PlayerPage = lazy(() => import("@/screens/PlayerPage").then((m) => ({ default: m.PlayerPage })));
+
+const playerFallback = (
+  <div style={{ padding: 18, color: "var(--secondary-text)", fontWeight: 700 }}>加载播放器...</div>
+);
 
 type PlayerOverlayOpenPayload = { platform: string; roomId: string };
 
@@ -66,7 +60,9 @@ export function PlayerOverlayHost() {
             exit={{ opacity: 0, y: 110, rotate: 0.6, scale: 0.985 }}
             transition={{ duration: 0.32, ease: [0.16, 1, 0.3, 1] }}
           >
-            <PlayerPage platform={platform} roomId={roomId} onRequestCloseAction={closePlayer} />
+            <Suspense fallback={playerFallback}>
+              <PlayerPage platform={platform} roomId={roomId} onRequestCloseAction={closePlayer} />
+            </Suspense>
           </m.div>
         </m.div>
       ) : null}
