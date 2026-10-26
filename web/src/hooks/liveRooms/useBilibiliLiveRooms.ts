@@ -11,6 +11,9 @@ export function useBilibiliLiveRooms(subCategoryId: string | null, parentCategor
   const [error, setError] = useState<string | null>(null);
   const [currentPage, setCurrentPage] = useState(1);
   const [hasMore, setHasMore] = useState(true);
+  // Bumped by every first-page fetch (a category change) and by clearing; a
+  // response from an older generation must not touch rooms or loading state.
+  const genRef = useRef(0);
   const proxyBaseRef = useRef<string | null>(null);
 
   const canFetch = useMemo(() => !!subCategoryId && !!parentCategoryId, [parentCategoryId, subCategoryId]);
@@ -54,6 +57,8 @@ export function useBilibiliLiveRooms(subCategoryId: string | null, parentCategor
         return;
       }
       await ensureProxyStarted();
+      const gen = loadMore ? genRef.current : ++genRef.current;
+      const live = () => gen === genRef.current;
       if (loadMore) setIsLoadingMore(true);
       else setIsLoading(true);
       setError(null);
@@ -64,6 +69,7 @@ export function useBilibiliLiveRooms(subCategoryId: string | null, parentCategor
           parentAreaId: parentCategoryId,
           page
         });
+        if (!live()) return;
         const parsed = JSON.parse(text);
         const list: any[] = parsed?.data?.list ?? [];
         const newRooms = list.map(mapToCommon);
@@ -71,12 +77,15 @@ export function useBilibiliLiveRooms(subCategoryId: string | null, parentCategor
         setHasMore(newRooms.length > 0);
         setCurrentPage(page + 1);
       } catch (e: any) {
+        if (!live()) return;
         setError(typeof e === "string" ? e : e?.message || "获取 B 站主播列表失败");
         setHasMore(false);
         if (!loadMore) setRooms([]);
       } finally {
-        if (loadMore) setIsLoadingMore(false);
-        else setIsLoading(false);
+        if (live()) {
+          if (loadMore) setIsLoadingMore(false);
+          else setIsLoading(false);
+        }
       }
     },
     [ensureProxyStarted, mapToCommon, parentCategoryId, subCategoryId]
@@ -96,6 +105,9 @@ export function useBilibiliLiveRooms(subCategoryId: string | null, parentCategor
 
   useEffect(() => {
     if (!canFetch) {
+      genRef.current++;
+      setIsLoading(false);
+      setIsLoadingMore(false);
       setRooms([]);
       setHasMore(false);
       return;

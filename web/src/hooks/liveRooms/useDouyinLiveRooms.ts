@@ -12,6 +12,9 @@ export function useDouyinLiveRooms(partitionId: string | null, partitionTypeId: 
   const [error, setError] = useState<string | null>(null);
   const [currentOffset, setCurrentOffset] = useState(0);
   const [hasMore, setHasMore] = useState(true);
+  // Bumped by every first-page fetch (a category change) and by clearing; a
+  // response from an older generation must not touch rooms or loading state.
+  const genRef = useRef(0);
   const msTokenRef = useRef<string | null>(null);
 
   const canFetch = useMemo(() => !!partitionId && !!partitionTypeId, [partitionId, partitionTypeId]);
@@ -60,6 +63,8 @@ export function useDouyinLiveRooms(partitionId: string | null, partitionTypeId: 
         return;
       }
 
+      const gen = loadMore ? genRef.current : ++genRef.current;
+      const live = () => gen === genRef.current;
       if (loadMore) setIsLoadingMore(true);
       else setIsLoading(true);
       setError(null);
@@ -76,6 +81,7 @@ export function useDouyinLiveRooms(partitionId: string | null, partitionTypeId: 
           offset,
           msToken: msToken
         });
+        if (!live()) return;
 
         if (response && Array.isArray(response.rooms)) {
           const newRooms = response.rooms.map(mapRawRoomToCommonStreamer);
@@ -89,6 +95,7 @@ export function useDouyinLiveRooms(partitionId: string | null, partitionTypeId: 
           setHasMore(false);
         }
       } catch (e: any) {
+        if (!live()) return;
         logger.error("[useDouyinLiveRooms] Error fetching rooms:", e);
         // 提取更友好的错误信息
         let errorMsg = typeof e === "string" ? e : (e?.message || "Failed to fetch rooms");
@@ -104,8 +111,10 @@ export function useDouyinLiveRooms(partitionId: string | null, partitionTypeId: 
           setHasMore(false);
         }
       } finally {
-        if (loadMore) setIsLoadingMore(false);
-        else setIsLoading(false);
+        if (live()) {
+          if (loadMore) setIsLoadingMore(false);
+          else setIsLoading(false);
+        }
       }
     },
     [mapRawRoomToCommonStreamer, partitionId, partitionTypeId]
@@ -134,6 +143,9 @@ export function useDouyinLiveRooms(partitionId: string | null, partitionTypeId: 
 
   useEffect(() => {
     if (!canFetch) {
+      genRef.current++;
+      setIsLoading(false);
+      setIsLoadingMore(false);
       setRooms([]);
       setHasMore(false);
       setError(null);

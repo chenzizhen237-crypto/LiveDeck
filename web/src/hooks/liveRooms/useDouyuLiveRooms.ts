@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import type { CommonStreamer } from "@/platforms/common/streamerTypes";
 
@@ -33,6 +33,9 @@ export function useDouyuLiveRooms(categoryType: "cate2" | "cate3" | null, catego
   const [isLoading, setIsLoading] = useState(false);
   const [isLoadingMore, setIsLoadingMore] = useState(false);
   const [hasMore, setHasMore] = useState(true);
+  // Bumped by every first-page fetch (a category change) and by clearing; a
+  // response from an older generation must not touch rooms or loading state.
+  const genRef = useRef(0);
   const [currentPage, setCurrentPage] = useState(0);
 
   const mapDouyuItemToCommon = useCallback((item: DouyuStreamer): CommonStreamer => {
@@ -58,6 +61,8 @@ export function useDouyuLiveRooms(categoryType: "cate2" | "cate3" | null, catego
         return;
       }
 
+      const gen = loadMore ? genRef.current : ++genRef.current;
+      const live = () => gen === genRef.current;
       if (loadMore) setIsLoadingMore(true);
       else setIsLoading(true);
 
@@ -73,6 +78,7 @@ export function useDouyuLiveRooms(categoryType: "cate2" | "cate3" | null, catego
 
       try {
         const resp = await invoke<LiveListApiResponse>(command, params);
+        if (!live()) return;
         if (resp.error !== 0 || !resp.data) throw new Error(resp.msg || "斗鱼接口返回错误");
 
         const newRooms = (resp.data.list || []).map(mapDouyuItemToCommon);
@@ -89,12 +95,15 @@ export function useDouyuLiveRooms(categoryType: "cate2" | "cate3" | null, catego
 
         setCurrentPage(pageToFetch);
       } catch (e) {
+        if (!live()) return;
         console.error("[useDouyuLiveRooms] invoke error", e);
         if (pageToFetch === 0) setRooms([]);
         setHasMore(false);
       } finally {
-        if (loadMore) setIsLoadingMore(false);
-        else setIsLoading(false);
+        if (live()) {
+          if (loadMore) setIsLoadingMore(false);
+          else setIsLoading(false);
+        }
       }
     },
     [categoryId, categoryType, mapDouyuItemToCommon]
@@ -114,6 +123,9 @@ export function useDouyuLiveRooms(categoryType: "cate2" | "cate3" | null, catego
 
   useEffect(() => {
     if (!canFetch) {
+      genRef.current++;
+      setIsLoading(false);
+      setIsLoadingMore(false);
       setRooms([]);
       setHasMore(false);
       return;

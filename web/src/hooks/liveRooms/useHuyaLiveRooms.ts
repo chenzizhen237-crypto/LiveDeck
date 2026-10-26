@@ -16,6 +16,9 @@ export function useHuyaLiveRooms(gid: string | null, options: UseHuyaLiveRoomsOp
   const [error, setError] = useState<string | null>(null);
   const [currentPage, setCurrentPage] = useState(1);
   const [hasMore, setHasMore] = useState(true);
+  // Bumped by every first-page fetch (a category change) and by clearing; a
+  // response from an older generation must not touch rooms or loading state.
+  const genRef = useRef(0);
   const pageSize = options.defaultPageSize ?? 120;
   const lastInitialKeyRef = useRef<string | null>(null);
   const inflightRef = useRef<Map<string, Promise<void>>>(new Map());
@@ -63,6 +66,8 @@ export function useHuyaLiveRooms(gid: string | null, options: UseHuyaLiveRoomsOp
       if (existing) return existing;
 
       const task = (async () => {
+        const gen = loadMore ? genRef.current : ++genRef.current;
+        const live = () => gen === genRef.current;
         if (loadMore) setIsLoadingMore(true);
         else setIsLoading(true);
         setError(null);
@@ -75,6 +80,7 @@ export function useHuyaLiveRooms(gid: string | null, options: UseHuyaLiveRoomsOp
             iPageNo: pageNo,
             iPageSize: pageSize
           });
+          if (!live()) return;
 
           if (resp.error !== 0 || !Array.isArray(resp.data)) throw new Error(resp.msg || "虎牙接口返回错误");
           const newRooms = resp.data.map(mapHuyaItemToCommonStreamer);
@@ -82,6 +88,7 @@ export function useHuyaLiveRooms(gid: string | null, options: UseHuyaLiveRoomsOp
           setHasMore(newRooms.length === pageSize);
           setCurrentPage(pageNo + 1);
         } catch (e: any) {
+          if (!live()) return;
           console.error("[useHuyaLiveRooms] invoke error", e);
           setError(e?.message || "加载失败");
           if (!loadMore) {
@@ -89,8 +96,10 @@ export function useHuyaLiveRooms(gid: string | null, options: UseHuyaLiveRoomsOp
             setHasMore(false);
           }
         } finally {
-          if (loadMore) setIsLoadingMore(false);
-          else setIsLoading(false);
+          if (live()) {
+            if (loadMore) setIsLoadingMore(false);
+            else setIsLoading(false);
+          }
         }
       })();
 
@@ -120,6 +129,9 @@ export function useHuyaLiveRooms(gid: string | null, options: UseHuyaLiveRoomsOp
 
   useEffect(() => {
     if (!canFetch) {
+      genRef.current++;
+      setIsLoading(false);
+      setIsLoadingMore(false);
       setRooms([]);
       setHasMore(false);
       return;

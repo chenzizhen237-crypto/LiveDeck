@@ -2,7 +2,6 @@
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { listen, type Event as TauriEvent } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
 import { v4 as uuidv4 } from "uuid";
 import { AnimatePresence, m } from "framer-motion";
@@ -33,8 +32,10 @@ import { fetchAndPrepareDouyinStreamConfig } from "@/platforms/douyin/playerHelp
 import { getHuyaStreamConfig } from "@/platforms/huya/playerHelper";
 import { getBilibiliStreamConfig } from "@/platforms/bilibili/playerHelper";
 import { useImageProxy } from "@/hooks/useImageProxy";
+import { danmakuColor as douyuColor, holdRoomDanmaku, holdRoomProxy, subscribeDanmaku } from "@/services/roomSession";
 import { useFollow, type FollowedStreamer, type Platform as FollowPlatform } from "@/state/follow/FollowProvider";
 import { usePlayerUi } from "@/state/playerUi/PlayerUiProvider";
+import type { UiPlatform } from "@/state/category/CategoryProvider";
 
 declare global {
   // Used to guard against React StrictMode(dev) mount/unmount cycles accidentally stopping a newer player session.
@@ -123,30 +124,6 @@ function maybeAppendHevcInstallHint(rawMessage: string) {
   return msg;
 }
 
-type UnifiedRustDanmakuPayload = {
-  room_id?: string;
-  user: string;
-  content: string;
-  user_level: number;
-  fans_club_level: number;
-  color?: string | null;
-};
-
-const DOUYU_COLORS: Record<number, string> = {
-  // 斗鱼官方计算色值。
-  1: '#FFFFFF', // 蓝/白
-  2: '#70C150', // 绿
-  3: '#E04AC0', // 粉
-  4: '#D4A113', // 黄
-  5: '#8A5BE9', // 紫
-  6: '#FF314E', // 红
-  7: '#FF314E', // 渐变色在覆盖层中降级为红色
-};
-
-function douyuColor(color: string | null | undefined): string | undefined {
-  if (!color) return undefined;
-  return DOUYU_COLORS[parseInt(color, 10)];
-}
 
 type LineOption = { key: string; label: string };
 const lineOptionsByPlatform: Partial<Record<Platform, LineOption[]>> = {
@@ -188,6 +165,10 @@ function resolveCurrentLineFor(options: LineOption[], currentLine: string | null
   return options[0]?.key ?? null;
 }
 
+function toUiPlatform(p: Platform): UiPlatform {
+  return p.toLowerCase() as UiPlatform;
+}
+
 export function MainPlayer({
   platform,
   roomId,
@@ -210,6 +191,9 @@ export function MainPlayer({
   const playbackKindRef = useRef<null | "hls" | "flv">(null);
   const danmuOverlayRef = useRef<DanmuOverlayInstance | null>(null);
   const unlistenRef = useRef<null | (() => void)>(null);
+  const danmakuReleaseRef = useRef<null | (() => void)>(null);
+  const proxyReleaseRef = useRef<null | (() => void)>(null);
+  const uiPlatform = toUiPlatform(platform);
 
   const disposedRef = useRef(false);
   const activeSessionIdRef = useRef(0);
@@ -256,6 +240,9 @@ export function MainPlayer({
     const stored = loadDanmuPreferences();
     return stored?.enabled ?? true;
   });
+  // The danmaku handler outlives renders; it reads the toggle through this ref.
+  const isDanmuEnabledRef = useRef(isDanmuEnabled);
+  isDanmuEnabledRef.current = isDanmuEnabled;
   const [danmuSettings, setDanmuSettings] = useState<DanmuUserSettings>(() => {
     if (typeof window === "undefined") return DEFAULT_DANMU_SETTINGS;
     const stored = loadDanmuPreferences();
@@ -537,6 +524,7 @@ export function MainPlayer({
   >(null);
   const qualityReloadArmedRef = useRef(false);
   const reloadInFlightRef = useRef(false);
+  const autoReloadRef = useRef({ since: 0, count: 0 });
   const pendingReloadRef = useRef<null | { trigger: "refresh" | "quality" | "line"; overrides?: { quality?: string; line?: string | null } }>(
     null
   );
@@ -613,43 +601,33 @@ export function MainPlayer({
     setIsFullScreen(false);
   }, []);
 
+  // This player only ever stops what it holds, so split-view tiles (or another
+  // window of the same room) keep running.
   const stopAllDanmakuBackends = useCallback(async () => {
-    // Business rule: only one room at a time. Stopping all backends is the safest way to avoid cross-platform leaks.
-    try {
-      await invoke("stop_danmaku_listener", { roomId: "" });
-    } catch {
-      // ignore
-    }
-    try {
-      await invoke("stop_douyin_danmu_listener");
-    } catch {
-      // ignore
-    }
-    try {
-      await invoke("stop_huya_danmaku_listener", { roomId: "" });
-    } catch {
-      // ignore
-    }
-    try {
-      await invoke("stop_bilibili_danmaku_listener");
-    } catch {
-      // ignore
-    }
+    danmakuReleaseRef.current?.();
+    danmakuReleaseRef.current = null;
   }, []);
 
   const stopAllProxies = useCallback(async () => {
-    // Only one room at a time; stop both to avoid "switch platform" leaks.
-    try {
-      await stopDouyuProxy();
-    } catch {
-      // ignore
-    }
-    try {
-      await stopHuyaProxy();
-    } catch {
-      // ignore
-    }
+    proxyReleaseRef.current?.();
+    proxyReleaseRef.current = null;
   }, []);
+
+  /** Holds the room's proxy entry for this session; false if the session went stale meanwhile. */
+  const holdProxyFor = useCallback(
+    (sessionId: number) => {
+      proxyReleaseRef.current?.();
+      const release = holdRoomProxy(uiPlatform, roomId);
+      if (!isSessionActive(sessionId)) {
+        release();
+        proxyReleaseRef.current = null;
+        return false;
+      }
+      proxyReleaseRef.current = release;
+      return true;
+    },
+    [isSessionActive, roomId, uiPlatform]
+  );
 
   const startDanmaku = useCallback(
     async (
@@ -675,35 +653,17 @@ export function MainPlayer({
          } catch {
            // ignore
          }
-         // Always stop existing backends first (cross-platform), then start the current one.
          await stopAllDanmakuBackends();
          if (!isSessionActive(sessionId)) return;
-
-         if (platformToStart === Platform.DOUYU) {
-           await invoke("start_danmaku_listener", { roomId: roomIdToStart });
-         } else if (platformToStart === Platform.DOUYIN) {
-           const payload: RustGetStreamUrlPayload = { args: { room_id_str: roomIdToStart }, platform: Platform.DOUYIN };
-           await invoke("start_douyin_danmu_listener", { payload });
-         } else if (platformToStart === Platform.HUYA) {
-           await invoke("start_huya_danmaku_listener", { payload: { args: { room_id_str: roomIdToStart } } });
-         } else if (platformToStart === Platform.BILIBILI) {
-           const cookie = typeof localStorage !== "undefined" ? localStorage.getItem("bilibili_cookie") : null;
-           await invoke("start_bilibili_danmaku_listener", {
-             payload: { args: { room_id_str: roomIdToStart } },
-             cookie: cookie || null
-           });
-         }
+         danmakuReleaseRef.current = holdRoomDanmaku(toUiPlatform(platformToStart), roomIdToStart);
        } catch (e) {
          console.warn("[Player] start danmaku backend failed:", e);
          return;
        }
 
        const effectiveFilterRoomId = roomIdToFilter || roomIdToStart;
-       const unlisten = await listen<UnifiedRustDanmakuPayload>("danmaku-message", (event: TauriEvent<UnifiedRustDanmakuPayload>) => {
+       const unlisten = subscribeDanmaku(effectiveFilterRoomId, (p) => {
         if (!isSessionActive(sessionId)) return;
-        const p = event.payload;
-        if (!p) return;
-        if (p.room_id && p.room_id !== effectiveFilterRoomId) return;
 
          const msg: DanmakuMessage = {
            id: uuidv4(),
@@ -725,7 +685,7 @@ export function MainPlayer({
           }
         }
 
-        if (isDanmuEnabled && overlay?.sendComment) {
+        if (isDanmuEnabledRef.current && overlay?.sendComment) {
           try {
             overlay.sendComment({
               id: msg.id,
@@ -745,7 +705,7 @@ export function MainPlayer({
 
       unlistenRef.current = unlisten;
     },
-    [isDanmuEnabled, isSessionActive, stopAllDanmakuBackends]
+    [isSessionActive, stopAllDanmakuBackends]
   );
 
   const mountPlayer = useCallback(
@@ -775,7 +735,7 @@ export function MainPlayer({
       const [{ default: PlayerCtor }, flvMod, hlsMod, overlayMod, pluginsMod] = await Promise.all([
         import("xgplayer"),
         import("xgplayer-flv"),
-        import("xgplayer-hls.js"),
+        import("@/components/player/hlsPlugin"),
         // A/B switch while comparing engines (set localStorage ld_danmu_engine = "legacy").
         window.localStorage.getItem("ld_danmu_engine") === "legacy"
           ? import("@/components/player/legacyDanmuOverlay")
@@ -828,30 +788,18 @@ export function MainPlayer({
       };
 
       if (isHlsPlayback) {
-        const hlsFetchOptions: RequestInit = {
-          referrer: "https://live.bilibili.com/",
-          referrerPolicy: "no-referrer-when-downgrade",
-          credentials: "omit",
-          mode: "cors"
-        };
-
+        // xgplayer hands each plugin the option named after it (case-insensitive):
+        // HlsJsPlugin reads { hlsOpts } and passes it straight to hls.js.
         playerOptions.plugins = [HlsPlugin];
-        playerOptions.useHlsPlugin = true;
-        playerOptions.hls = {
-          isLive: true,
-          retryCount: 3,
-          retryDelay: 2000,
-          enableWorker: true,
-          withCredentials: false,
-          lowLatencyMode: false,
-          fetchOptions: hlsFetchOptions,
-          xhrSetup: (xhr: XMLHttpRequest) => {
-            try {
+        playerOptions.HlsJsPlugin = {
+          hlsOpts: {
+            enableWorker: true,
+            lowLatencyMode: false,
+            manifestLoadingMaxRetry: 3,
+            levelLoadingMaxRetry: 3,
+            fragLoadingMaxRetry: 3,
+            xhrSetup: (xhr: XMLHttpRequest) => {
               xhr.withCredentials = false;
-              xhr.setRequestHeader("Referer", "https://live.bilibili.com/");
-              xhr.setRequestHeader("Origin", "https://live.bilibili.com");
-            } catch {
-              // ignore
             }
           }
         };
@@ -882,15 +830,14 @@ export function MainPlayer({
         }
 
         playerOptions.plugins = [FlvPlugin];
+        // xgplayer-flv's own options (the old keys were flv.js ones it ignores).
         playerOptions.flv = {
           isLive: true,
-          cors: true,
-          autoCleanupSourceBuffer: true,
-          enableWorker: true,
-          stashInitialSize: 128,
-          lazyLoad: true,
-          lazyLoadMaxDuration: 30,
-          deferLoadAfterSourceOpen: true
+          retryCount: 3,
+          retryDelay: 1000,
+          loadTimeout: 10000,
+          preloadTime: 5,
+          bufferBehind: 10
         };
       }
 
@@ -923,6 +870,25 @@ export function MainPlayer({
         player.on?.("fullscreen_change", onFull);
         player.on?.("cssFullscreen_change", onCssFull);
         player.on?.("destroy", () => setIsFullScreen(false));
+        // The relay ends the stream with an error when the upstream codec changes or
+        // stalls for 15 s; a live stream "ending" means the same. Reload the room,
+        // at most 3 times a minute so a dead room doesn't loop.
+        const onStreamBroken = () => {
+          if (!isSessionActive(sessionId)) return;
+          const now = Date.now();
+          const r = autoReloadRef.current;
+          if (now - r.since > 60_000) {
+            r.since = now;
+            r.count = 0;
+          }
+          if (r.count >= 3) return;
+          r.count += 1;
+          window.setTimeout(() => {
+            if (isSessionActive(sessionId)) void reloadStreamRef.current?.("refresh");
+          }, 1000);
+        };
+        player.on?.("error", onStreamBroken);
+        player.on?.("ended", onStreamBroken);
       } catch {
         // ignore
       }
@@ -1022,7 +988,10 @@ export function MainPlayer({
   const reloadStream = useCallback(
     async (_trigger: "refresh" | "quality" | "line", overrides?: { quality?: string; line?: string | null }) => {
       if (reloadInFlightRef.current) {
+        // The newest request wins: invalidate the in-flight session so its awaits
+        // bail out, and run this one from its finally (via the latest closure).
         pendingReloadRef.current = { trigger: _trigger, overrides };
+        activeSessionIdRef.current = ++sessionSeqRef.current;
         return;
       }
       reloadInFlightRef.current = true;
@@ -1040,17 +1009,18 @@ export function MainPlayer({
       const effectiveQuality = overrides?.quality ?? currentQuality;
       const effectiveLine = typeof overrides?.line !== "undefined" ? overrides.line : currentLine;
 
-      await stopAllDanmakuBackends();
-      await stopAllProxies();
-      if (!isSessionActive(sessionId)) return;
-
       try {
-        await applyDanmuFontFamilyForOS();
-      } catch {
-        // ignore
-      }
+        // Inside the try so a stale session still reaches finally and clears reloadInFlight.
+        await stopAllDanmakuBackends();
+        await stopAllProxies();
+        if (!isSessionActive(sessionId)) return;
 
-      try {
+        try {
+          await applyDanmuFontFamilyForOS();
+        } catch {
+          // ignore
+        }
+
         if (platform === Platform.DOUYU) {
           const resolvedLine = resolveCurrentLineFor(lineOptions, effectiveLine);
           try {
@@ -1062,7 +1032,7 @@ export function MainPlayer({
             // ignore meta fetch failures
           }
           const { streamUrl, streamType } = await getDouyuStreamConfig(roomId, effectiveQuality, resolvedLine);
-          if (!isSessionActive(sessionId)) return;
+          if (!holdProxyFor(sessionId)) return;
           setPlayerIsLive(true);
           const nextIsHls = (streamType || "").toLowerCase() === "hls" || streamUrl.toLowerCase().includes(".m3u8");
           const nextKind: "hls" | "flv" = nextIsHls ? "hls" : "flv";
@@ -1132,7 +1102,7 @@ export function MainPlayer({
             effectiveQuality,
             resolvedLine
           );
-          if (!isSessionActive(sessionId)) return;
+          if (!holdProxyFor(sessionId)) return;
           setPlayerTitle(title ?? null);
           setPlayerAnchorName(anchorName ?? null);
           setPlayerAvatar(avatar ?? null);
@@ -1174,7 +1144,7 @@ export function MainPlayer({
             // ignore meta fetch failures
           }
           const { streamUrl, streamType } = await getBilibiliStreamConfig(roomId, effectiveQuality, cookie || undefined);
-          if (!isSessionActive(sessionId)) return;
+          if (!holdProxyFor(sessionId)) return;
           setPlayerIsLive(true);
           const nextIsHls = (streamType || "").toLowerCase() === "hls" || streamUrl.toLowerCase().includes(".m3u8");
           const nextKind: "hls" | "flv" = nextIsHls ? "hls" : "flv";
@@ -1219,11 +1189,11 @@ export function MainPlayer({
         const pending = pendingReloadRef.current;
         pendingReloadRef.current = null;
         if (pending) {
-          void reloadStream(pending.trigger, pending.overrides);
+          void reloadStreamRef.current?.(pending.trigger, pending.overrides);
         }
       }
     },
-    [currentLine, currentQuality, destroyPlayer, isSessionActive, lineOptions, mountPlayer, platform, roomId, stopAllDanmakuBackends, stopAllProxies]
+    [currentLine, currentQuality, destroyPlayer, holdProxyFor, isSessionActive, lineOptions, mountPlayer, platform, roomId, stopAllDanmakuBackends, stopAllProxies]
   );
 
   useEffect(() => {
