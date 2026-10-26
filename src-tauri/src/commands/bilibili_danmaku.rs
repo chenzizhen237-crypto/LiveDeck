@@ -3,14 +3,14 @@ use std::sync::Arc;
 use tauri::Emitter;
 use tokio::sync::mpsc as tokio_mpsc;
 
-use dtv_core::danmaku::DanmakuHandler;
+use livedeck_core::danmaku::DanmakuHandler;
 
 #[tauri::command]
 pub async fn start_bilibili_danmaku_listener(
-    payload: dtv_core::platforms::common::GetStreamUrlPayload,
+    payload: livedeck_core::platforms::common::GetStreamUrlPayload,
     cookie: Option<String>,
     app_handle: tauri::AppHandle,
-    state: tauri::State<'_, dtv_core::platforms::common::BilibiliDanmakuState>,
+    state: tauri::State<'_, livedeck_core::platforms::common::BilibiliDanmakuState>,
 ) -> Result<(), String> {
     let room_id = payload.args.room_id_str;
 
@@ -43,7 +43,7 @@ pub async fn start_bilibili_danmaku_listener(
     });
 
     tokio::spawn(async move {
-        dtv_core::platforms::bilibili::danmaku::run_bilibili_danmaku_listener(
+        livedeck_core::platforms::bilibili::danmaku::run_bilibili_danmaku_listener(
             room_id,
             cookie,
             rx_shutdown,
@@ -57,7 +57,7 @@ pub async fn start_bilibili_danmaku_listener(
 
 #[tauri::command]
 pub async fn stop_bilibili_danmaku_listener(
-    state: tauri::State<'_, dtv_core::platforms::common::BilibiliDanmakuState>,
+    state: tauri::State<'_, livedeck_core::platforms::common::BilibiliDanmakuState>,
 ) -> Result<(), String> {
     let tx = {
         let mut lock = state.inner().0.lock().unwrap();

@@ -29,19 +29,19 @@ pub async fn start_danmaku_listener(
         window: tauri::Window,
     }
 
-    impl dtv_core::danmaku::DanmakuHandler for TauriWindowDanmakuHandler {
+    impl livedeck_core::danmaku::DanmakuHandler for TauriWindowDanmakuHandler {
         fn emit_json(&self, event: &str, payload: serde_json::Value) {
             let _ = self.window.emit(event, payload);
         }
     }
 
-    let handler: Arc<dyn dtv_core::danmaku::DanmakuHandler> = Arc::new(TauriWindowDanmakuHandler {
+    let handler: Arc<dyn livedeck_core::danmaku::DanmakuHandler> = Arc::new(TauriWindowDanmakuHandler {
         window: window.clone(),
     });
 
     let room_id_clone = room_id.clone();
     tokio::spawn(async move {
-        let mut client = dtv_core::platforms::douyu::danmaku::DanmakuClient::new(
+        let mut client = livedeck_core::platforms::douyu::danmaku::DanmakuClient::new(
             &room_id_clone,
             handler,
             stop_rx,

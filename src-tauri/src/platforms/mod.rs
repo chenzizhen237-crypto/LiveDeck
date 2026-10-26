@@ -1,5 +1,5 @@
 pub mod bilibili;
-pub use dtv_core::platforms::common;
+pub use livedeck_core::platforms::common;
 pub mod douyin;
 pub mod douyu;
 pub mod huya;

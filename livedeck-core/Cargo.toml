@@ -1,11 +1,11 @@
 [package]
-name = "dtv-core"
+name = "livedeck-core"
 version = "0.1.0"
 edition = "2021"
 publish = false
 
 [lib]
-name = "dtv_core"
+name = "livedeck_core"
 path = "src/lib.rs"
 
 [dependencies]

@@ -37,7 +37,7 @@ export const useCategoryStore = defineStore("category", () => {
 
   // Favorite Categories (Persistent)
   const favoriteCategories = ref<Array<{ id: string; title: string; platform: UiPlatform; type: string }>>(
-    JSON.parse(localStorage.getItem("dtv_favorite_categories") || "[]")
+    JSON.parse(localStorage.getItem("livedeck_favorite_categories") || "[]")
   );
 
   const toggleFavoriteCategory = (item: { id: string; title: string; type: string }) => {
@@ -52,7 +52,7 @@ export const useCategoryStore = defineStore("category", () => {
         platform: activePlatform.value,
       });
     }
-    localStorage.setItem("dtv_favorite_categories", JSON.stringify(favoriteCategories.value));
+    localStorage.setItem("livedeck_favorite_categories", JSON.stringify(favoriteCategories.value));
   };
 
   const toggleFavoriteCategoryForPlatform = (
@@ -71,7 +71,7 @@ export const useCategoryStore = defineStore("category", () => {
       });
     }
     localStorage.setItem(
-      "dtv_favorite_categories",
+      "livedeck_favorite_categories",
       JSON.stringify(favoriteCategories.value),
     );
   };

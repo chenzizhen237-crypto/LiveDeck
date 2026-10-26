@@ -21,7 +21,7 @@ static GLOBAL: OnceLock<DouyinSignedUrlBuilder> = OnceLock::new();
 
 pub fn global_builder() -> &'static DouyinSignedUrlBuilder {
     GLOBAL.get_or_init(|| {
-        let ttl_secs = env::var("DTV_DOUYIN_SIGN_TTL")
+        let ttl_secs = env::var("LIVEDECK_DOUYIN_SIGN_TTL")
             .ok()
             .and_then(|v| v.parse().ok())
             .unwrap_or(30);

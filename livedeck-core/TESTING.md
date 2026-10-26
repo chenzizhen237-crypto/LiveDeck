@@ -1,6 +1,6 @@
-# dtv-core Testing Plan
+# livedeck-core Testing Plan
 
-This document describes the test plan for `dtv-core`, with an initial focus on Douyu (`room_id=74960`).
+This document describes the test plan for `livedeck-core`, with an initial focus on Douyu (`room_id=74960`).
 
 Guiding principles:
 
@@ -21,7 +21,7 @@ Characteristics:
 Location:
 
 - Prefer `#[cfg(test)] mod tests` inside the module being tested.
-- For shared fixtures, place them under `dtv-core/tests/fixtures/**`.
+- For shared fixtures, place them under `livedeck-core/tests/fixtures/**`.
 
 ### 2) Live integration tests (network)
 
@@ -29,24 +29,24 @@ Characteristics:
 
 - Talks to real endpoints and WebSocket services.
 - Potentially flaky due to rate limits, geo restrictions, room offline state, and network variance.
-- Marked `#[ignore]` and optionally also gated by `DTV_LIVE_TEST=1`.
+- Marked `#[ignore]` and optionally also gated by `LIVEDECK_LIVE_TEST=1`.
 
 Location:
 
-- `dtv-core/tests/**` integration test files.
+- `livedeck-core/tests/**` integration test files.
 
 Recommended invocation:
 
 ```bash
-cargo test -p dtv-core
-DTV_LIVE_TEST=1 cargo test -p dtv-core -- --ignored --nocapture
+cargo test -p livedeck-core
+LIVEDECK_LIVE_TEST=1 cargo test -p livedeck-core -- --ignored --nocapture
 ```
 
 ## Douyu: Room info (avatar, live status, basic fields)
 
 Target module:
 
-- `dtv-core/src/platforms/douyu/fetch_douyu_room_info.rs`
+- `livedeck-core/src/platforms/douyu/fetch_douyu_room_info.rs`
 
 ### A1. Parse betard JSON (unit, fixture)
 
@@ -62,7 +62,7 @@ Plan:
 
 Fixtures:
 
-- `dtv-core/tests/fixtures/douyu/betard_74960.json` (captured from `https://www.douyu.com/betard/74960`).
+- `livedeck-core/tests/fixtures/douyu/betard_74960.json` (captured from `https://www.douyu.com/betard/74960`).
 
 Assertions (stable):
 
@@ -94,7 +94,7 @@ Assertions (loose):
 
 Target module:
 
-- `dtv-core/src/platforms/douyu/stream_url.rs`
+- `livedeck-core/src/platforms/douyu/stream_url.rs`
 
 Public API today:
 
@@ -153,7 +153,7 @@ Recommendation:
 
 Target module:
 
-- `dtv-core/src/platforms/douyu/danmaku.rs`
+- `livedeck-core/src/platforms/douyu/danmaku.rs`
 
 Note:
 
@@ -171,7 +171,7 @@ Plan:
 - Extract the parsing logic into a pure function:
   - `parse_douyu_frame(data: &[u8], room_id: &str) -> Option<DanmakuFrontendPayload>`
 - Add binary fixtures (captured frames) under:
-  - `dtv-core/tests/fixtures/douyu/danmaku_chatmsg.bin` (and a few variants)
+  - `livedeck-core/tests/fixtures/douyu/danmaku_chatmsg.bin` (and a few variants)
 
 Assertions:
 

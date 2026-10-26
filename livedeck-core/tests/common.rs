@@ -1,8 +1,8 @@
 use std::sync::{Arc, Mutex};
-use dtv_core::danmaku::DanmakuHandler;
+use livedeck_core::danmaku::DanmakuHandler;
 
 pub fn live_enabled() -> bool {
-    std::env::var("DTV_LIVE_TEST")
+    std::env::var("LIVEDECK_LIVE_TEST")
         .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
         .unwrap_or(false)
 }

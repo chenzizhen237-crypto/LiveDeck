@@ -1,8 +1,8 @@
 {
-  "name": "dtv",
+  "name": "livedeck",
   "private": true,
   "license": "AGPL-3.0",
-  "version": "2.4.4-dtv.1",
+  "version": "0.1.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -14,7 +14,6 @@
     "@tauri-apps/api": "^2.7.0",
     "@tauri-apps/plugin-opener": "^2.4.0",
     "@tauri-apps/plugin-os": "^2.3.0",
-    "@tauri-apps/plugin-updater": "^2.3.0",
     "@vueuse/core": "^12.5.0",
     "biome": "^0.3.3",
     "danmu.js": "1.1.13-douyin-1.5",

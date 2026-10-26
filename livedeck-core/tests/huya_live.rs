@@ -1,6 +1,6 @@
 mod common;
 
-use dtv_core::platforms::common::FollowHttpClient;
+use livedeck_core::platforms::common::FollowHttpClient;
 use common::{live_enabled, TestHandler};
 use tracing::debug;
 
@@ -14,13 +14,13 @@ async fn huya_880201_unified_live() {
     }
 
     let _ = tracing_subscriber::fmt()
-        .with_env_filter("dtv_core=debug")
+        .with_env_filter("livedeck_core=debug")
         .try_init();
 
     let follow_http = FollowHttpClient::new().expect("FollowHttpClient::new");
     
     // Check info and stream in one go
-    let resp = dtv_core::platforms::huya::stream_url::get_huya_unified_cmd(
+    let resp = livedeck_core::platforms::huya::stream_url::get_huya_unified_cmd(
         TARGET_ROOM_ID.to_string(),
         Some("原画".to_string()),
         None,
@@ -51,7 +51,7 @@ async fn huya_880201_danmaku_listener_smoke() {
     let handler = TestHandler::new();
     let (tx, rx) = tokio::sync::mpsc::channel(1);
 
-    let task = tokio::spawn(dtv_core::platforms::huya::danmaku::run_huya_danmaku_listener(
+    let task = tokio::spawn(livedeck_core::platforms::huya::danmaku::run_huya_danmaku_listener(
         TARGET_ROOM_ID.to_string(),
         rx,
         handler.clone(),

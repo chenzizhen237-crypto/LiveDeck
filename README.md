@@ -1,12 +1,12 @@
 <div align="center">
-  <img src="images/icon.png" alt="DTV Logo" width="128" height="128">
-  <h1>DTV</h1>
+  <img src="images/icon.png" alt="LiveDeck Logo" width="128" height="128">
+  <h1>LiveDeck</h1>
   <p>基于 Tauri 2.0 的跨平台斗鱼、虎牙、抖音、bilibili直播桌面客户端</p>
 </div>
 
 ## 说明
 
-1. 基于[DTV](https://github.com/chen-zeong/DTV)的ui重构
+1. LiveDeck 是 [DTV](https://github.com/chen-zeong/DTV) 的分支（AGPL-3.0），在其基础上重构了 UI 与架构
 
 ### 支持平台
 

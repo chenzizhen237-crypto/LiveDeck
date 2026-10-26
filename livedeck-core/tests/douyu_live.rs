@@ -1,6 +1,6 @@
 mod common;
 
-use dtv_core::platforms::common::FollowHttpClient;
+use livedeck_core::platforms::common::FollowHttpClient;
 use tracing::debug;
 use common::{live_enabled, TestHandler};
 
@@ -14,11 +14,11 @@ async fn douyu_74960_room_info_live() {
     }
 
     let _ = tracing_subscriber::fmt()
-        .with_env_filter("dtv_core=debug") // 只看 dtv-core 的日志
+        .with_env_filter("livedeck_core=debug") // 只看 livedeck-core 的日志
         .try_init();
 
     let follow_http = FollowHttpClient::new().expect("FollowHttpClient::new");
-    let info = dtv_core::platforms::douyu::fetch_douyu_room_info::fetch_douyu_room_info(
+    let info = livedeck_core::platforms::douyu::fetch_douyu_room_info::fetch_douyu_room_info(
         TARGET_ROOM_ID.to_string(),
         &follow_http,
     )
@@ -42,7 +42,7 @@ async fn douyu_74960_stream_urls_live() {
     }
 
     let follow_http = FollowHttpClient::new().expect("FollowHttpClient::new");
-    let info = dtv_core::platforms::douyu::fetch_douyu_room_info::fetch_douyu_room_info(
+    let info = livedeck_core::platforms::douyu::fetch_douyu_room_info::fetch_douyu_room_info(
         TARGET_ROOM_ID.to_string(),
         &follow_http,
     )
@@ -57,7 +57,7 @@ async fn douyu_74960_stream_urls_live() {
     let qualities = ["原画", "高清", "标清"];
     let mut ok_count = 0usize;
     for q in qualities {
-        match dtv_core::platforms::douyu::stream_url::get_stream_url_with_quality("74960", q, None)
+        match livedeck_core::platforms::douyu::stream_url::get_stream_url_with_quality("74960", q, None)
             .await
         {
             Ok(url) => {
@@ -84,7 +84,7 @@ async fn douyu_74960_danmaku_listener_smoke() {
     let handler = TestHandler::new();
 
     let (stop_tx, stop_rx) = tokio::sync::oneshot::channel();
-    let client = dtv_core::platforms::douyu::danmaku::DanmakuClient::new(
+    let client = livedeck_core::platforms::douyu::danmaku::DanmakuClient::new(
         TARGET_ROOM_ID,
         handler.clone(),
         stop_rx,

@@ -10,11 +10,11 @@ export type DanmuUserSettings = {
   opacity: number;
 };
 
-export const DANMU_PREFERENCES_STORAGE_KEY = "dtv_danmu_preferences_v1";
+export const DANMU_PREFERENCES_STORAGE_KEY = "livedeck_danmu_preferences_v1";
 export const DANMU_AREA_OPTIONS = [0.25, 0.5, 0.75] as const;
 export const DANMU_OPACITY_MIN = 0.2;
 export const DANMU_OPACITY_MAX = 1;
-export const PLAYER_VOLUME_STORAGE_KEY = "dtv_player_volume_v1";
+export const PLAYER_VOLUME_STORAGE_KEY = "livedeck_player_volume_v1";
 export const DEFAULT_DANMU_FONT_FAMILY =
   '"OPPO Sans", "Microsoft YaHei", "PingFang SC", "Helvetica Neue", Arial, sans-serif';
 export const WINDOWS_DANMU_FONT_FAMILY =

@@ -1,27 +1,19 @@
 [package]
-name = "dtv"
-version = "2.4.4"
-description = "A Tauri App"
+name = "livedeck"
+version = "0.1.0"
+description = "LiveDeck - multi-platform live stream desktop client"
 authors = ["c-zeong"]
 edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
-[lib]
-# The `_lib` suffix may seem redundant but it is necessary
-# to make the lib name unique and wouldn't conflict with the bin name.
-# This seems to be only an issue on Windows, see https://github.com/rust-lang/cargo/issues/8519
-name = "dtv_lib"
-crate-type = ["staticlib", "cdylib", "rlib"]
-
 [build-dependencies]
 tauri-build = { version = "2.3.1", features = [] }
 
 [dependencies]
-dtv-core = { path = "../dtv-core" }
+livedeck-core = { path = "../livedeck-core" }
  tauri = { version = "2.7.0", features = ["macos-private-api"] }
 tauri-plugin-opener = "2.4.0"
-tauri-plugin-updater = "2.3.0"
 window-vibrancy = "0.7.1"
  serde = { version = "1.0", features = ["derive"] }
  serde_json = "1.0.117"

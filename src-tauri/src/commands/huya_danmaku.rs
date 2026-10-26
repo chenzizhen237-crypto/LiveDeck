@@ -3,13 +3,13 @@ use std::sync::Arc;
 use tauri::Emitter;
 use tokio::sync::mpsc as tokio_mpsc;
 
-use dtv_core::danmaku::DanmakuHandler;
+use livedeck_core::danmaku::DanmakuHandler;
 
 #[tauri::command]
 pub async fn start_huya_danmaku_listener(
-    payload: dtv_core::platforms::common::GetStreamUrlPayload,
+    payload: livedeck_core::platforms::common::GetStreamUrlPayload,
     app_handle: tauri::AppHandle,
-    state: tauri::State<'_, dtv_core::platforms::common::HuyaDanmakuState>,
+    state: tauri::State<'_, livedeck_core::platforms::common::HuyaDanmakuState>,
 ) -> Result<(), String> {
     let room_id_or_url = payload.args.room_id_str;
 
@@ -42,7 +42,7 @@ pub async fn start_huya_danmaku_listener(
     });
 
     tokio::spawn(async move {
-        dtv_core::platforms::huya::danmaku::run_huya_danmaku_listener(
+        livedeck_core::platforms::huya::danmaku::run_huya_danmaku_listener(
             room_id_or_url,
             rx_shutdown,
             handler,
@@ -56,7 +56,7 @@ pub async fn start_huya_danmaku_listener(
 #[tauri::command]
 pub async fn stop_huya_danmaku_listener(
     room_id: String,
-    state: tauri::State<'_, dtv_core::platforms::common::HuyaDanmakuState>,
+    state: tauri::State<'_, livedeck_core::platforms::common::HuyaDanmakuState>,
 ) -> Result<(), String> {
     let _ = room_id;
     let tx = {

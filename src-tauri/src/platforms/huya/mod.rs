@@ -1,2 +1,2 @@
 #[allow(unused_imports)]
-pub use dtv_core::platforms::huya::stream_url;
+pub use livedeck_core::platforms::huya::stream_url;

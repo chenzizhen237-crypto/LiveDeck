@@ -1,11 +1,11 @@
 mod common;
 
-use dtv_core::platforms::common::{FollowHttpClient, GetStreamUrlPayload, types::GetStreamUrlArgs};
+use livedeck_core::platforms::common::{FollowHttpClient, GetStreamUrlPayload, types::GetStreamUrlArgs};
 use common::{live_enabled, TestHandler};
 use tracing::debug;
 
 fn target_room_id() -> String {
-    std::env::var("DTV_TEST_DOUYIN_ID").unwrap_or_else(|_| "714470305828".to_string())
+    std::env::var("LIVEDECK_TEST_DOUYIN_ID").unwrap_or_else(|_| "714470305828".to_string())
 }
 
 #[tokio::test]
@@ -16,7 +16,7 @@ async fn douyin_room_info_live() {
     }
 
     let _ = tracing_subscriber::fmt()
-        .with_env_filter("dtv_core=debug")
+        .with_env_filter("livedeck_core=debug")
         .try_init();
 
     let follow_http = FollowHttpClient::new().expect("FollowHttpClient::new");
@@ -26,7 +26,7 @@ async fn douyin_room_info_live() {
         },
     };
 
-    let info = dtv_core::platforms::douyin::douyin_streamer_info::fetch_douyin_streamer_info(
+    let info = livedeck_core::platforms::douyin::douyin_streamer_info::fetch_douyin_streamer_info(
         payload,
         &follow_http,
     )
@@ -60,7 +60,7 @@ async fn douyin_danmaku_listener_smoke() {
     let handler = TestHandler::new();
     let (tx, rx) = tokio::sync::mpsc::channel(1);
 
-    let task = tokio::spawn(dtv_core::platforms::douyin::douyin_danmu_listener::run_douyin_danmu_listener(
+    let task = tokio::spawn(livedeck_core::platforms::douyin::douyin_danmu_listener::run_douyin_danmu_listener(
         target_room_id(),
         rx,
         handler.clone(),

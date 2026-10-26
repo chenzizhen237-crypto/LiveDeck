@@ -38,7 +38,7 @@ fn main() {
 
     tauri::Builder::default()
         .plugin(tauri_plugin_log::Builder::new()
-            .level(if std::env::var("DTV_DEBUG").map(|v| v == "1").unwrap_or(false) {
+            .level(if std::env::var("LIVEDECK_DEBUG").map(|v| v == "1").unwrap_or(false) {
                 log::LevelFilter::Debug
             } else {
                 log::LevelFilter::Info
@@ -51,7 +51,6 @@ fn main() {
             .build())
         .plugin(tauri_plugin_os::init())
         .plugin(tauri_plugin_opener::init())
-        .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(|app| {
             // Apply macOS vibrancy to the main window when running on macOS
             #[cfg(target_os = "macos")]

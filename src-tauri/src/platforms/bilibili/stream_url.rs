@@ -50,7 +50,7 @@ pub async fn get_bilibili_live_stream_url_with_quality(
         .build()
         .map_err(|e| DtvError::internal(format!("Failed to build client: {}", e)))?;
 
-    let mut info = dtv_core::platforms::bilibili::stream_url::get_bilibili_stream_url(
+    let mut info = livedeck_core::platforms::bilibili::stream_url::get_bilibili_stream_url(
         &client,
         &room_id,
         &quality,

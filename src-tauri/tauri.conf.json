@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "DTV",
-  "version": "2.4.4",
-  "identifier": "com.dtv.app",
+  "productName": "LiveDeck",
+  "version": "0.1.0",
+  "identifier": "com.livedeck.app",
   "build": {
     "beforeDevCommand": "pnpm run dev",
     "devUrl": "http://localhost:2896",
@@ -29,17 +29,16 @@
       "csp": "default-src 'self' tauri://localhost http://127.0.0.1:* http://localhost:* http://* https://* data: blob:; connect-src 'self' tauri://localhost ipc://localhost http://127.0.0.1:* http://localhost:* http://* https://* ws://127.0.0.1:* ws://localhost:* ws://* wss://*; media-src 'self' tauri://localhost http://127.0.0.1:* http://localhost:* http://* https://* data: blob:; media-src-elem 'self' tauri://localhost http://127.0.0.1:* http://localhost:* http://* https://* blob:; img-src 'self' tauri://localhost data: blob: http://127.0.0.1:* http://localhost:* http://* https://*; font-src 'self' data: https://*; script-src 'self' 'unsafe-eval' blob: 'wasm-unsafe-eval' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; worker-src blob:; child-src blob:; object-src blob:; base-uri 'self'"
     }
   },
-  "plugins": {
-    "updater": {
-      "endpoints": [
-        "https://github.com/chen-zeong/dtv/releases/latest/download/latest.json"
-      ],
-      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEE5MDFGOTRGMjk2NTI0NzEKUldSeEpHVXBUL2tCcWIzZGlnTnppZ3ZYVGxZWHJjOVpxOTUxU3JzbkdTN0JSZUNmVlVpWGRYelkK"
-    }
-  },
   "bundle": {
     "active": true,
-    "targets": ["app", "dmg", "nsis", "msi", "deb", "appimage"],
+    "targets": [
+      "app",
+      "dmg",
+      "nsis",
+      "msi",
+      "deb",
+      "appimage"
+    ],
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
@@ -49,10 +48,14 @@
     ],
     "windows": {
       "nsis": {
-        "languages": ["SimpChinese"]
+        "languages": [
+          "SimpChinese"
+        ]
       },
       "wix": {
-        "language": ["zh-CN"]
+        "language": [
+          "zh-CN"
+        ]
       }
     }
   }

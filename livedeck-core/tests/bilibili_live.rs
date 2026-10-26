@@ -1,7 +1,7 @@
 mod common;
 
-use dtv_core::platforms::common::{FollowHttpClient, GetStreamUrlPayload, types::GetStreamUrlArgs};
-use dtv_core::platforms::bilibili::state::BilibiliState;
+use livedeck_core::platforms::common::{FollowHttpClient, GetStreamUrlPayload, types::GetStreamUrlArgs};
+use livedeck_core::platforms::bilibili::state::BilibiliState;
 use common::{live_enabled, TestHandler};
 use tracing::debug;
 
@@ -15,7 +15,7 @@ async fn bilibili_7734200_room_info_live() {
     }
 
     let _ = tracing_subscriber::fmt()
-        .with_env_filter("dtv_core=debug")
+        .with_env_filter("livedeck_core=debug")
         .try_init();
 
     let follow_http = FollowHttpClient::new().expect("FollowHttpClient::new");
@@ -27,7 +27,7 @@ async fn bilibili_7734200_room_info_live() {
         },
     };
 
-    let info = dtv_core::platforms::bilibili::streamer_info::fetch_bilibili_streamer_info(
+    let info = livedeck_core::platforms::bilibili::streamer_info::fetch_bilibili_streamer_info(
         payload,
         None,
         &follow_http,
@@ -62,7 +62,7 @@ async fn bilibili_7734200_stream_urls_live() {
             room_id_str: TARGET_ROOM_ID.to_string(),
         },
     };
-    let info = dtv_core::platforms::bilibili::streamer_info::fetch_bilibili_streamer_info(
+    let info = livedeck_core::platforms::bilibili::streamer_info::fetch_bilibili_streamer_info(
         payload,
         None,
         &follow_http,
@@ -76,8 +76,8 @@ async fn bilibili_7734200_stream_urls_live() {
     }
 
     let client = &follow_http.0.inner;
-    // Bilibili core stream logic now available in dtv-core
-    let stream_info = dtv_core::platforms::bilibili::stream_url::get_bilibili_stream_url(
+    // Bilibili core stream logic now available in livedeck-core
+    let stream_info = livedeck_core::platforms::bilibili::stream_url::get_bilibili_stream_url(
         client,
         TARGET_ROOM_ID,
         "原画",
@@ -104,7 +104,7 @@ async fn bilibili_7734200_danmaku_listener_smoke() {
     let handler = TestHandler::new();
     let (tx, rx) = tokio::sync::mpsc::channel(1);
 
-    let task = tokio::spawn(dtv_core::platforms::bilibili::danmaku::run_bilibili_danmaku_listener(
+    let task = tokio::spawn(livedeck_core::platforms::bilibili::danmaku::run_bilibili_danmaku_listener(
         TARGET_ROOM_ID.to_string(),
         None,
         rx,

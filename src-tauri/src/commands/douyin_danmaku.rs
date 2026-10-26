@@ -3,13 +3,13 @@ use std::sync::Arc;
 use tauri::Emitter;
 use tokio::sync::mpsc as tokio_mpsc;
 
-use dtv_core::danmaku::DanmakuHandler;
+use livedeck_core::danmaku::DanmakuHandler;
 
 #[tauri::command]
 pub async fn start_douyin_danmu_listener(
-    payload: dtv_core::platforms::common::GetStreamUrlPayload,
+    payload: livedeck_core::platforms::common::GetStreamUrlPayload,
     app_handle: tauri::AppHandle,
-    state: tauri::State<'_, dtv_core::platforms::common::DouyinDanmakuState>,
+    state: tauri::State<'_, livedeck_core::platforms::common::DouyinDanmakuState>,
 ) -> Result<(), String> {
     let room_id_or_url = payload.args.room_id_str;
 
@@ -46,7 +46,7 @@ pub async fn start_douyin_danmu_listener(
     });
 
     tokio::spawn(async move {
-        dtv_core::platforms::douyin::douyin_danmu_listener::run_douyin_danmu_listener(
+        livedeck_core::platforms::douyin::douyin_danmu_listener::run_douyin_danmu_listener(
             room_id_or_url,
             rx_shutdown,
             handler,
