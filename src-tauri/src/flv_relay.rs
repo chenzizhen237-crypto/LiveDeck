@@ -29,6 +29,14 @@ const RETRY_DELAY: Duration = Duration::from_millis(500);
 const MAX_CONSECUTIVE_FAILURES: u32 = 5;
 /// 解析缓冲的上限。单个 FLV tag 远小于此值，超过即说明字节流无法按 FLV 解析。
 const MAX_PENDING_BUFFER: usize = 8 * 1024 * 1024;
+/// 上游多久没有任何数据就视为断流（直播流正常每秒都有数据）。
+const IDLE_TIMEOUT: Duration = Duration::from_secs(15);
+/// 一次取流（解析地址 + 建立连接）的总期限。
+const ACQUIRE_TIMEOUT: Duration = Duration::from_secs(15);
+/// 接续时新旧时间戳相差超过此值即视为时间轴中断（主播重推后时间戳归零等）。
+const DISCONTINUITY_THRESHOLD_MS: i64 = 10_000;
+/// 时间轴中断时，接续点放在旧位置之后多少毫秒（约一帧）。
+const DISCONTINUITY_GAP_MS: i64 = 40;
 
 pub type ByteStream = Pin<Box<dyn Stream<Item = reqwest::Result<Bytes>> + Send>>;
 
@@ -50,6 +58,29 @@ struct FlvTag {
     is_sequence_header: bool,
 }
 
+impl FlvTag {
+    /// tag 的 data 部分（不含 11 字节头与 PreviousTagSize）。
+    fn payload(&self) -> &[u8] {
+        &self.raw[11..self.raw.len() - 4]
+    }
+
+    /// 返回改写了时间戳的副本。
+    fn retimed(&self, timestamp: u32) -> FlvTag {
+        let mut raw = BytesMut::from(&self.raw[..]);
+        raw[4] = (timestamp >> 16) as u8;
+        raw[5] = (timestamp >> 8) as u8;
+        raw[6] = timestamp as u8;
+        raw[7] = (timestamp >> 24) as u8;
+        FlvTag {
+            raw: raw.freeze(),
+            tag_type: self.tag_type,
+            timestamp,
+            is_keyframe: self.is_keyframe,
+            is_sequence_header: self.is_sequence_header,
+        }
+    }
+}
+
 const TAG_TYPE_AUDIO: u8 = 8;
 const TAG_TYPE_VIDEO: u8 = 9;
 const TAG_TYPE_SCRIPT: u8 = 18;
@@ -60,6 +91,8 @@ struct FlvDemuxer {
     buf: BytesMut,
     header: Option<Bytes>,
     header_parsed: bool,
+    /// 文件头以 "FLV" 开头（与 header 是否已被取走无关）。
+    is_flv: bool,
 }
 
 impl FlvDemuxer {
@@ -84,6 +117,7 @@ impl FlvDemuxer {
                 return false;
             }
             self.header = Some(self.buf.split_to(total).freeze());
+            self.is_flv = true;
         }
         self.header_parsed = true;
         true
@@ -102,10 +136,14 @@ impl FlvDemuxer {
         self.buf.len() > MAX_PENDING_BUFFER
     }
 
-    fn reset(&mut self) {
-        self.buf.clear();
-        self.header = None;
-        self.header_parsed = false;
+    /// 文件头已解析且确实是 FLV。
+    fn is_flv(&self) -> bool {
+        self.header_parsed && self.is_flv
+    }
+
+    /// 取走尚未解析的剩余字节（退化为直通时使用）。
+    fn take_pending(&mut self) -> Bytes {
+        self.buf.split().freeze()
     }
 
     fn next_tag(&mut self) -> Option<FlvTag> {
@@ -161,14 +199,47 @@ impl FlvDemuxer {
 struct Timeline {
     last_video_ts: Option<u32>,
     last_audio_ts: Option<u32>,
+    /// 播放器当前使用的解码配置（首段的 sequence header 内容）。
+    video_config: Option<Bytes>,
+    audio_config: Option<Bytes>,
 }
 
 impl Timeline {
     fn observe(&mut self, tag: &FlvTag) {
+        if tag.is_sequence_header {
+            let config = Bytes::copy_from_slice(tag.payload());
+            match tag.tag_type {
+                TAG_TYPE_VIDEO => self.video_config = Some(config),
+                TAG_TYPE_AUDIO => self.audio_config = Some(config),
+                _ => {}
+            }
+            return;
+        }
         match tag.tag_type {
             TAG_TYPE_VIDEO => self.last_video_ts = Some(tag.timestamp),
             TAG_TYPE_AUDIO => self.last_audio_ts = Some(tag.timestamp),
             _ => {}
+        }
+    }
+
+    /// 新流的 sequence header 与播放器正在使用的是否不同（编码参数变化）。
+    fn config_changed(&self, tag: &FlvTag) -> bool {
+        let current = match tag.tag_type {
+            TAG_TYPE_VIDEO => &self.video_config,
+            TAG_TYPE_AUDIO => &self.audio_config,
+            _ => return false,
+        };
+        matches!(current, Some(c) if c.as_ref() != tag.payload())
+    }
+
+    /// 接续用的时间戳偏移：新段首个关键帧与旧位置相差过大（时间轴中断）时，
+    /// 把新段平移到旧位置之后；否则不改写（斗鱼正常续流时间轴是连续的）。
+    fn offset_for(&self, keyframe_ts: u32) -> i64 {
+        match self.last_video_ts {
+            Some(prev) if (keyframe_ts as i64 - prev as i64).abs() > DISCONTINUITY_THRESHOLD_MS => {
+                prev as i64 + DISCONTINUITY_GAP_MS - keyframe_ts as i64
+            }
+            _ => 0,
         }
     }
 
@@ -191,12 +262,12 @@ struct Segment {
     body: ByteStream,
     demuxer: FlvDemuxer,
     started_at: Instant,
-    /// 是否为接续段。
-    /// 首段原样转发上游字节块，保持与改造前一致的写入粒度；
-    /// 只有接续段才需要在 tag 边界上裁剪，并对裁剪结果重新聚合后发出。
+    /// 是否为接续段。接续段需要丢弃文件头、初始化 tag 和重复的 GOP。
     continuation: bool,
     /// 接续段在遇到第一个可用关键帧之前不转发任何内容。
     waiting_for_keyframe: bool,
+    /// 时间轴中断时施加到本段每个 tag 上的时间戳偏移（毫秒）。
+    ts_offset: i64,
 }
 
 impl Segment {
@@ -208,6 +279,7 @@ impl Segment {
             started_at: Instant::now(),
             continuation,
             waiting_for_keyframe: continuation,
+            ts_offset: 0,
         }
     }
 
@@ -305,61 +377,126 @@ async fn acquire_segment(
         .map_err(|e| e.to_string())
 }
 
+/// 预取任务的句柄；relay 退出（包括播放器断开）时自动取消，避免任务泄漏。
+struct Prefetch(Option<tokio::task::JoinHandle<Result<ByteStream, String>>>);
+
+impl Drop for Prefetch {
+    fn drop(&mut self) {
+        if let Some(handle) = self.0.take() {
+            handle.abort();
+        }
+    }
+}
+
+type Tx = mpsc::Sender<Result<Bytes, IoError>>;
+
+/// 取下一段流的方式。正式运行时是斗鱼取流，测试里换成假数据。
+type Acquire = std::sync::Arc<
+    dyn Fn() -> Pin<Box<dyn std::future::Future<Output = Result<ByteStream, String>> + Send>>
+        + Send
+        + Sync,
+>;
+
+/// 取一条新流，带总期限；播放器断开时立即放弃。返回 None 表示下游已离开。
+async fn acquire_or_cancel(tx: &Tx, acquire: &Acquire) -> Option<Result<ByteStream, String>> {
+    tokio::select! {
+        _ = tx.closed() => None,
+        r = tokio::time::timeout(ACQUIRE_TIMEOUT, acquire()) => {
+            Some(r.unwrap_or_else(|_| Err("取流超时".to_string())))
+        }
+    }
+}
+
+/// 结束这条流：通知播放器出错（播放器会按出错处理并重新加载），然后退出。
+async fn fail(tx: &Tx, kind: ErrorKind, msg: impl Into<String>) {
+    let _ = tx.send(Err(IoError::new(kind, msg.into()))).await;
+}
+
 /// 持续向 `tx` 输出一条逻辑上不中断的 FLV 流。
 ///
-/// `ctx` 为 None 时退化为单段直通：上游结束即结束，行为与改造前一致。
+/// `ctx` 为 None 时退化为单段直通：上游结束即结束。
+/// 需要续流时（斗鱼），从首段起就只按完整 tag 输出，保证上游在 tag 中间断开时
+/// 播放器手里不会留下半个 tag，接续段得以在干净的边界上接上。
 pub async fn run(
-    tx: mpsc::Sender<Result<Bytes, IoError>>,
+    tx: Tx,
     first_body: ByteStream,
     ctx: Option<StreamRenewContext>,
     client: Client,
     default_ua: String,
     huya_ua: String,
 ) {
+    let label = ctx.as_ref().map(|c| c.room_id.clone()).unwrap_or_default();
+    let acquire = ctx.map(|ctx| {
+        std::sync::Arc::new(move || {
+            let (ctx, client, default_ua, huya_ua) =
+                (ctx.clone(), client.clone(), default_ua.clone(), huya_ua.clone());
+            Box::pin(async move { acquire_segment(&ctx, &client, &default_ua, &huya_ua).await })
+                as Pin<Box<dyn std::future::Future<Output = _> + Send>>
+        }) as Acquire
+    });
+    relay(tx, first_body, acquire, label).await
+}
+
+async fn relay(tx: Tx, first_body: ByteStream, acquire: Option<Acquire>, label: String) {
     let mut segment = Segment::new(first_body, false);
     let mut timeline = Timeline::default();
     // 不需要续流的平台（虎牙、B 站）走纯直通，连解析都省掉。
-    let mut track_timeline = ctx.is_some();
-    let mut prefetch: Option<tokio::task::JoinHandle<Result<ByteStream, String>>> = None;
+    let mut track_timeline = acquire.is_some();
+    let mut prefetch = Prefetch(None);
     let mut failures: u32 = 0;
 
     loop {
         // 旧流临近到期时，提前取好下一条。
-        if let Some(ref ctx) = ctx {
-            if prefetch.is_none() && segment.should_prefetch() {
-                let ctx = ctx.clone();
-                let client = client.clone();
-                let default_ua = default_ua.clone();
-                let huya_ua = huya_ua.clone();
-                prefetch = Some(tokio::spawn(async move {
-                    acquire_segment(&ctx, &client, &default_ua, &huya_ua).await
+        if let Some(ref acquire) = acquire {
+            if prefetch.0.is_none() && segment.should_prefetch() {
+                let next = acquire();
+                prefetch.0 = Some(tokio::spawn(async move {
+                    tokio::time::timeout(ACQUIRE_TIMEOUT, next)
+                        .await
+                        .unwrap_or_else(|_| Err("预取超时".to_string()))
                 }));
             }
         }
 
-        match segment.body.next().await {
+        // 同时等待：上游数据、上游空闲超时、播放器断开。
+        // Err(None) 表示空闲超时，Err(Some(e)) 为上游读取错误。
+        let item: Option<Result<Bytes, Option<reqwest::Error>>> = tokio::select! {
+            _ = tx.closed() => return,
+            r = tokio::time::timeout(IDLE_TIMEOUT, segment.body.next()) => match r {
+                Ok(item) => item.map(|res| res.map_err(Some)),
+                Err(_) => Some(Err(None)),
+            },
+        };
+
+        match item {
             Some(Ok(chunk)) => {
-                if !segment.continuation {
-                    // 首段：原样转发，写入粒度与上游字节块一致（Bytes 克隆是 O(1)，不复制数据）。
-                    // 逐 tag 转发会把一次写放大成几十次，反而拖累播放流畅度。
-                    if tx.send(Ok(chunk.clone())).await.is_err() {
-                        return;
+                let out = if !track_timeline {
+                    // 纯直通：原样转发（Bytes 克隆是 O(1)，不复制数据）。
+                    chunk
+                } else if !segment.continuation {
+                    // 首段：按完整 tag 聚合后输出，残缺的 tag 留在缓冲里等下一块。
+                    segment.demuxer.push(&chunk);
+                    let mut out = BytesMut::new();
+                    if let Some(header) = segment.demuxer.take_header() {
+                        out.extend_from_slice(&header);
                     }
-                    // 只有需要续流时才解析，用于记下时间轴位置供接续段对齐。
-                    if track_timeline {
-                        segment.demuxer.push(&chunk);
-                        // 文件头已随原始字节发出，这里仅消费掉。
-                        segment.demuxer.take_header();
+                    if segment.demuxer.try_parse_header() && !segment.demuxer.is_flv() {
+                        // 不是 FLV（文件头不对），无法续流，退化为直通。
+                        eprintln!("[flv_relay] 上游不是 FLV，退化为直通");
+                        track_timeline = false;
+                        out.extend_from_slice(&segment.demuxer.take_pending());
+                    } else {
                         while let Some(tag) = segment.demuxer.next_tag() {
                             timeline.observe(&tag);
+                            out.extend_from_slice(&tag.raw);
                         }
                         if segment.demuxer.is_desynced() {
-                            // 不是可解析的 FLV，放弃维护时间轴，退化为纯直通。
-                            eprintln!("[flv_relay] 上游不是可解析的 FLV，停止时间轴跟踪");
+                            eprintln!("[flv_relay] FLV 解析失步，退化为直通");
                             track_timeline = false;
-                            segment.demuxer.reset();
+                            out.extend_from_slice(&segment.demuxer.take_pending());
                         }
                     }
+                    out.freeze()
                 } else {
                     segment.demuxer.push(&chunk);
                     // 接续段的文件头必须丢弃，播放器只认首段那一个。
@@ -367,60 +504,101 @@ pub async fn run(
 
                     let mut out = BytesMut::new();
                     while let Some(tag) = segment.demuxer.next_tag() {
-                        if segment.waiting_for_keyframe {
-                            // 丢掉元数据与初始化 tag，播放器已经初始化过了。
-                            if tag.tag_type == TAG_TYPE_SCRIPT || tag.is_sequence_header {
-                                continue;
-                            }
-                            // 从第一个越过旧流位置的关键帧开始接。
-                            if !(tag.tag_type == TAG_TYPE_VIDEO
-                                && tag.is_keyframe
-                                && timeline.is_ahead(&tag))
-                            {
-                                continue;
-                            }
-                            segment.waiting_for_keyframe = false;
-                        } else if tag.tag_type != TAG_TYPE_SCRIPT && !timeline.is_ahead(&tag) {
-                            // CDN 会回吐一个 GOP 的缓冲，重复部分直接丢弃。
+                        if tag.tag_type == TAG_TYPE_SCRIPT {
                             continue;
                         }
+                        if tag.is_sequence_header {
+                            // 编码参数没变就丢掉（播放器已初始化过）；变了则无法无缝接续，
+                            // 结束这条流让播放器重建媒体会话。
+                            if timeline.config_changed(&tag) {
+                                eprintln!("[flv_relay] 新流编码参数已变化，通知播放器重新加载");
+                                fail(&tx, ErrorKind::InvalidData, "stream codec changed").await;
+                                return;
+                            }
+                            continue;
+                        }
+                        if segment.waiting_for_keyframe {
+                            if !(tag.tag_type == TAG_TYPE_VIDEO && tag.is_keyframe) {
+                                continue;
+                            }
+                            let offset = timeline.offset_for(tag.timestamp);
+                            if offset == 0 && !timeline.is_ahead(&tag) {
+                                // CDN 回吐的旧 GOP。
+                                continue;
+                            }
+                            if offset != 0 {
+                                eprintln!(
+                                    "[flv_relay] 时间轴中断（{} -> {}），平移 {}ms 后接续",
+                                    timeline.last_video_ts.unwrap_or(0),
+                                    tag.timestamp,
+                                    offset
+                                );
+                            }
+                            segment.ts_offset = offset;
+                            segment.waiting_for_keyframe = false;
+                        }
 
+                        let tag = if segment.ts_offset != 0 {
+                            let ts = (tag.timestamp as i64 + segment.ts_offset).max(0) as u32;
+                            tag.retimed(ts)
+                        } else {
+                            tag
+                        };
+                        if !timeline.is_ahead(&tag) {
+                            // 重复部分直接丢弃。
+                            continue;
+                        }
                         timeline.observe(&tag);
                         out.extend_from_slice(&tag.raw);
                     }
+                    out.freeze()
+                };
 
-                    // 聚合后一次发出，保持与首段相近的写入粒度。
-                    if !out.is_empty() && tx.send(Ok(out.freeze())).await.is_err() {
-                        return;
-                    }
+                if !out.is_empty() && tx.send(Ok(out)).await.is_err() {
+                    return;
                 }
             }
             other => {
-                if let Some(Err(e)) = other {
-                    eprintln!("[flv_relay] 上游读取错误: {}", e);
+                match &other {
+                    Some(Err(Some(e))) => eprintln!("[flv_relay] 上游读取错误: {}", e),
+                    Some(Err(None)) => eprintln!("[flv_relay] 上游 {}s 无数据，视为断流", IDLE_TIMEOUT.as_secs()),
+                    _ => {}
                 }
 
-                let Some(ref ctx) = ctx else {
-                    // 非斗鱼：保持原有行为，上游结束即结束。
+                let Some(ref acquire) = acquire else {
+                    // 非斗鱼：上游结束即结束；异常结束要告诉播放器，而不是当作正常 EOF。
+                    if matches!(other, Some(Err(_))) {
+                        fail(&tx, ErrorKind::TimedOut, "upstream stalled or failed").await;
+                    }
                     return;
                 };
+                if !track_timeline {
+                    // 无法按 tag 接续（非 FLV / 失步），只能让播放器重新加载。
+                    fail(&tx, ErrorKind::BrokenPipe, "upstream ended").await;
+                    return;
+                }
 
                 let elapsed = segment.started_at.elapsed().as_secs_f32();
                 // 预取已就绪就直接用，否则说明是提前故障，同步补取一条。
-                let next = match prefetch.take() {
-                    Some(handle) => match handle.await {
-                        Ok(Ok(body)) => Ok(body),
-                        Ok(Err(e)) => Err(e),
-                        Err(e) => Err(format!("预取任务异常: {}", e)),
+                let next = match prefetch.0.take() {
+                    Some(handle) => tokio::select! {
+                        _ = tx.closed() => return,
+                        r = handle => match r {
+                            Ok(r) => r,
+                            Err(e) => Err(format!("预取任务异常: {}", e)),
+                        },
                     },
-                    None => acquire_segment(ctx, &client, &default_ua, &huya_ua).await,
+                    None => match acquire_or_cancel(&tx, acquire).await {
+                        Some(r) => r,
+                        None => return,
+                    },
                 };
 
                 match next {
                     Ok(body) => {
                         println!(
                             "[flv_relay] 上一段存活 {:.1}s，已接续新流（房间 {}）",
-                            elapsed, ctx.room_id
+                            elapsed, label
                         );
                         failures = 0;
                         segment = Segment::new(body, true);
@@ -432,16 +610,21 @@ pub async fn run(
                             failures, MAX_CONSECUTIVE_FAILURES, e
                         );
                         if failures >= MAX_CONSECUTIVE_FAILURES {
-                            let _ = tx.send(Err(IoError::new(ErrorKind::BrokenPipe, e))).await;
+                            fail(&tx, ErrorKind::BrokenPipe, e).await;
                             return;
                         }
-                        tokio::time::sleep(RETRY_DELAY).await;
-                        match acquire_segment(ctx, &client, &default_ua, &huya_ua).await {
-                            Ok(body) => {
+                        tokio::select! {
+                            _ = tx.closed() => return,
+                            _ = tokio::time::sleep(RETRY_DELAY) => {}
+                        }
+                        match acquire_or_cancel(&tx, acquire).await {
+                            None => return,
+                            Some(Ok(body)) => {
                                 failures = 0;
                                 segment = Segment::new(body, true);
                             }
-                            Err(_) => continue,
+                            // 下一轮循环里当前段仍处于结束状态，会再次进入重试分支。
+                            Some(Err(_)) => continue,
                         }
                     }
                 }
@@ -551,5 +734,159 @@ mod tests {
         // 音频时间轴独立，不受视频影响。
         let ahead = d.next_tag().unwrap();
         assert!(t.is_ahead(&ahead));
+    }
+
+    // ---- relay end-to-end tests with fake upstream segments ----
+
+    fn video(ts: u32, keyframe: bool) -> Vec<u8> {
+        make_tag(TAG_TYPE_VIDEO, ts, &[if keyframe { 0x17 } else { 0x27 }, 0x01, 0xaa, 0xbb])
+    }
+    fn audio(ts: u32) -> Vec<u8> {
+        make_tag(TAG_TYPE_AUDIO, ts, &[0xaf, 0x01, 0xcc])
+    }
+    fn seq_headers(avc: &[u8]) -> Vec<u8> {
+        let mut v = make_tag(TAG_TYPE_SCRIPT, 0, b"meta");
+        let mut data = vec![0x17, 0x00, 0x00, 0x00, 0x00];
+        data.extend_from_slice(avc);
+        v.extend(make_tag(TAG_TYPE_VIDEO, 0, &data));
+        v.extend(make_tag(TAG_TYPE_AUDIO, 0, &[0xaf, 0x00, 0x12, 0x10]));
+        v
+    }
+    fn stream_of(chunks: Vec<Vec<u8>>) -> ByteStream {
+        Box::pin(futures_util::stream::iter(
+            chunks.into_iter().map(|c| Ok(Bytes::from(c))),
+        ))
+    }
+
+    /// Runs the relay with one renewal and returns (output bytes, ended with error).
+    fn run_relay(first: Vec<Vec<u8>>, second: Vec<Vec<u8>>) -> (Vec<u8>, bool) {
+        tauri::async_runtime::block_on(async move {
+            let (tx, mut rx) = mpsc::channel(64);
+            let second = std::sync::Mutex::new(Some(second));
+            let acquire: Acquire = std::sync::Arc::new(move || {
+                // After the one renewal, the next "upstream" never answers; the
+                // test ends by dropping the receiver.
+                let next = second.lock().unwrap().take();
+                Box::pin(async move {
+                    match next {
+                        Some(chunks) => Ok(stream_of(chunks)),
+                        None => futures_util::future::pending().await,
+                    }
+                })
+            });
+            let task = tokio::spawn(relay(tx, stream_of(first), Some(acquire), "test".into()));
+            let mut out = Vec::new();
+            let mut errored = false;
+            while let Ok(Some(item)) =
+                tokio::time::timeout(Duration::from_millis(300), rx.recv()).await
+            {
+                match item {
+                    Ok(b) => out.extend_from_slice(&b),
+                    Err(_) => {
+                        errored = true;
+                        break;
+                    }
+                }
+            }
+            drop(rx);
+            tokio::time::timeout(Duration::from_secs(2), task)
+                .await
+                .expect("relay must exit once the player disconnects")
+                .unwrap();
+            (out, errored)
+        })
+    }
+
+    /// Parses relay output; every byte must belong to a whole tag.
+    fn parse_all(bytes: &[u8]) -> Vec<FlvTag> {
+        let mut d = FlvDemuxer::default();
+        d.push(bytes);
+        assert!(d.take_header().is_some(), "output must start with the FLV header");
+        let mut tags = Vec::new();
+        while let Some(t) = d.next_tag() {
+            tags.push(t);
+        }
+        assert!(d.take_pending().is_empty(), "output ends in a partial tag");
+        tags
+    }
+
+    fn video_timestamps(tags: &[FlvTag]) -> Vec<u32> {
+        tags.iter()
+            .filter(|t| t.tag_type == TAG_TYPE_VIDEO && !t.is_sequence_header)
+            .map(|t| t.timestamp)
+            .collect()
+    }
+
+    #[test]
+    fn upstream_cut_mid_tag_still_yields_whole_tags() {
+        let mut first = flv_header();
+        first.extend(seq_headers(b"cfg"));
+        first.extend(video(1000, true));
+        first.extend(audio(1010));
+        let cut = video(1040, false);
+        first.extend_from_slice(&cut[..cut.len() / 2]); // EOF in the middle of a tag
+
+        let mut second = flv_header();
+        second.extend(seq_headers(b"cfg"));
+        second.extend(video(1000, true)); // replayed GOP
+        second.extend(video(1080, true));
+        second.extend(audio(1090));
+
+        // Deliver in odd-sized chunks too.
+        let first_chunks = first.chunks(7).map(|c| c.to_vec()).collect();
+        let (out, errored) = run_relay(first_chunks, vec![second]);
+        assert!(!errored);
+        let tags = parse_all(&out);
+        assert_eq!(video_timestamps(&tags), vec![1000, 1080]);
+    }
+
+    #[test]
+    fn timestamp_reset_is_shifted_onto_the_old_timeline() {
+        let mut first = flv_header();
+        first.extend(seq_headers(b"cfg"));
+        first.extend(video(500_000, true));
+        first.extend(video(500_040, false));
+
+        let mut second = flv_header();
+        second.extend(seq_headers(b"cfg"));
+        second.extend(video(0, true)); // streamer re-pushed: timeline restarted
+        second.extend(audio(10));
+        second.extend(video(40, false));
+
+        let (out, errored) = run_relay(vec![first], vec![second]);
+        assert!(!errored);
+        let tags = parse_all(&out);
+        let ts = video_timestamps(&tags);
+        assert_eq!(ts, vec![500_000, 500_040, 500_080, 500_120]);
+        assert!(ts.windows(2).all(|w| w[0] < w[1]));
+    }
+
+    #[test]
+    fn codec_change_ends_the_stream_with_an_error() {
+        let mut first = flv_header();
+        first.extend(seq_headers(b"cfg-720p"));
+        first.extend(video(1000, true));
+
+        let mut second = flv_header();
+        second.extend(seq_headers(b"cfg-1080p"));
+        second.extend(video(1040, true));
+
+        let (out, errored) = run_relay(vec![first], vec![second]);
+        assert!(errored, "player must be told to rebuild");
+        assert_eq!(video_timestamps(&parse_all(&out)), vec![1000]);
+    }
+
+    #[test]
+    fn relay_exits_when_player_disconnects_while_upstream_is_silent() {
+        tauri::async_runtime::block_on(async {
+            let (tx, rx) = mpsc::channel(4);
+            let silent: ByteStream = Box::pin(futures_util::stream::pending());
+            let task = tokio::spawn(relay(tx, silent, None, "test".into()));
+            drop(rx);
+            tokio::time::timeout(Duration::from_secs(1), task)
+                .await
+                .expect("relay kept running after the player left")
+                .unwrap();
+        });
     }
 }
