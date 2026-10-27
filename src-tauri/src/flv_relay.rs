@@ -419,13 +419,14 @@ async fn fail(tx: &Tx, kind: ErrorKind, msg: impl Into<String>) {
 /// 播放器手里不会留下半个 tag，接续段得以在干净的边界上接上。
 pub async fn run(
     tx: Tx,
+    key: String,
     first_body: ByteStream,
     ctx: Option<StreamRenewContext>,
     client: Client,
     default_ua: String,
     huya_ua: String,
 ) {
-    let label = ctx.as_ref().map(|c| c.room_id.clone()).unwrap_or_default();
+    let label = key;
     let acquire = ctx.map(|ctx| {
         std::sync::Arc::new(move || {
             let (ctx, client, default_ua, huya_ua) =
@@ -438,6 +439,7 @@ pub async fn run(
 }
 
 async fn relay(tx: Tx, first_body: ByteStream, acquire: Option<Acquire>, label: String) {
+    let _connection = crate::playback_stats::ConnectionGuard::open(&label);
     let mut segment = Segment::new(first_body, false);
     let mut timeline = Timeline::default();
     // 不需要续流的平台（虎牙、B 站）走纯直通，连解析都省掉。
@@ -470,6 +472,7 @@ async fn relay(tx: Tx, first_body: ByteStream, acquire: Option<Acquire>, label: 
 
         match item {
             Some(Ok(chunk)) => {
+                crate::playback_stats::add_upstream_bytes(&label, chunk.len());
                 let out = if !track_timeline {
                     // 纯直通：原样转发（Bytes 克隆是 O(1)，不复制数据）。
                     chunk
@@ -601,10 +604,12 @@ async fn relay(tx: Tx, first_body: ByteStream, acquire: Option<Acquire>, label: 
                             elapsed, label
                         );
                         failures = 0;
+                        crate::playback_stats::renewed(&label);
                         segment = Segment::new(body, true);
                     }
                     Err(e) => {
                         failures += 1;
+                        crate::playback_stats::failed(&label);
                         eprintln!(
                             "[flv_relay] 续流失败 {}/{}: {}",
                             failures, MAX_CONSECUTIVE_FAILURES, e

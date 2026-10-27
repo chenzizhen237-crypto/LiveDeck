@@ -325,6 +325,7 @@ async fn flv_proxy_handler(key: &str, stream_url_store: &StreamUrlStore, client:
     let (tx, rx) = mpsc::channel::<Result<Bytes, std::io::Error>>(32);
     tauri::async_runtime::spawn(flv_relay::run(
         tx,
+        key.to_string(),
         first_body,
         renew_ctx,
         client.clone(),

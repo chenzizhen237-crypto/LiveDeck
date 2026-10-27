@@ -3,12 +3,13 @@
 // Everything goes through services/roomSession, so tiles and the single
 // player never stop each other's rooms.
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 
 import { DEFAULT_DANMU_FONT_FAMILY, loadDanmuPreferences, loadStoredVolume, type DanmuUserSettings } from "@/components/player/constants";
 import type { DanmuOverlayInstance } from "@/components/player/types";
 import { danmakuColor, holdRoomDanmaku, holdRoomProxy, resolveRoomStream, subscribeDanmaku } from "@/services/roomSession";
 import type { RoomRef } from "@/hooks/useOpenRoom";
+import { setTileStatus, trackTilePlayer, untrackTile } from "@/services/playbackMetrics/monitor";
 
 export type TileStatus = "connecting" | "playing" | "offline" | "error";
 
@@ -56,6 +57,9 @@ export function useTilePlayer(
   const mutedRef = useRef(opts.muted);
   mutedRef.current = opts.muted;
   const autoReload = useRef({ since: 0, count: 0 });
+  // Playback monitor: one id per tile; every player (re)creation starts a new counter epoch.
+  const metricsId = useId();
+  useEffect(() => () => untrackTile(metricsId), [metricsId]);
 
   // --- stream + player
   useEffect(() => {
@@ -63,6 +67,7 @@ export function useTilePlayer(
     if (!el) return;
     let disposed = false;
     let releaseProxy: () => void = () => {};
+    let untrack: () => void = () => {};
     let retryTimer = 0;
     setStatus("connecting");
     setError(null);
@@ -116,6 +121,10 @@ export function useTilePlayer(
 
         const player = new (Player as any)(options);
         playerRef.current = player;
+        untrack = trackTilePlayer(
+          { id: metricsId, label: s.anchorName || room.anchorName || room.roomId, platform: room.platform, streamUrl: s.streamUrl, isHls: s.isHls },
+          player
+        );
         if (!mutedRef.current) {
           const v = loadStoredVolume();
           if (v !== null) player.volume = v;
@@ -128,6 +137,7 @@ export function useTilePlayer(
           const r = autoReload.current;
           if (now - r.since > 60_000) Object.assign(r, { since: now, count: 0 });
           if (r.count >= 3) {
+            setTileStatus(metricsId, "error");
             setStatus("error");
             setError("直播流中断");
             return;
@@ -146,6 +156,7 @@ export function useTilePlayer(
         const msg = e?.message ? String(e.message) : String(e);
         const offline = isOfflineError(msg);
         setStatus(offline ? "offline" : "error");
+        setTileStatus(metricsId, offline ? "offline" : "error");
         setError(msg);
         // Offline rooms rejoin by themselves when they go live.
         if (offline) reloadSoon(OFFLINE_RETRY_MS);
@@ -162,6 +173,7 @@ export function useTilePlayer(
         // ignore
       }
       overlayRef.current = null;
+      untrack();
       try {
         playerRef.current?.destroy?.();
       } catch {

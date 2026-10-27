@@ -6,6 +6,8 @@ import { AnimatePresence, m } from "framer-motion";
 import { Check, GripVertical, LayoutDashboard, LayoutGrid, MessageSquareText, Minimize2, MoveDiagonal2, Plus, Scan, Trash2, TriangleAlert, Volume2 } from "lucide-react";
 
 import { PlatformMark } from "@/components/livedeck/primitives";
+import { PlaybackHealthChip } from "@/components/metrics/PlaybackHealthChip";
+import { PlaybackMonitor } from "@/components/metrics/PlaybackMonitor";
 import { applyDanmuFontFamilyForOS } from "@/components/player/constants";
 import { usePlayerOverlay } from "@/state/playerOverlay/PlayerOverlayProvider";
 import { useSplit, type PickTarget } from "@/state/split/SplitProvider";
@@ -48,6 +50,7 @@ export function SplitView() {
   const dragAbort = useRef<null | (() => void)>(null);
   const [notice, setNotice] = useState<PanelNotice | null>(null);
   const [saveAs, setSaveAs] = useState<string | null>(null);
+  const [health, setHealth] = useState<null | "popover" | "monitor">(null);
   const noticeTimer = useRef(0);
 
   const notify = useCallback((n: PanelNotice) => {
@@ -77,7 +80,8 @@ export function SplitView() {
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== "Escape") return;
       if (saveAs !== null) return; // the dialog handles its own Esc
-      if (dragAbort.current) dragAbort.current();
+      if (health) setHealth(null);
+      else if (dragAbort.current) dragAbort.current();
       else if (split.picking) split.cancelPick();
       else if (panel) setPanel(null);
       else if (split.zoomId) split.toggleZoom(split.zoomId);
@@ -88,7 +92,7 @@ export function SplitView() {
     };
     window.addEventListener("keydown", onKey, true);
     return () => window.removeEventListener("keydown", onKey, true);
-  }, [editing, panel, saveAs, split]);
+  }, [editing, health, panel, saveAs, split]);
 
   const cellAt = useCallback(
     (x: number, y: number) => {
@@ -351,6 +355,15 @@ export function SplitView() {
           >
             <GripVertical size={14} />
           </span>
+          <PlaybackHealthChip
+            open={health === "popover"}
+            onToggle={() => {
+              setPanel(null);
+              setHealth((h) => (h === "popover" ? null : "popover"));
+            }}
+            onOpenMonitor={() => setHealth("monitor")}
+            positionClass={dock.panelClass}
+          />
           <ToolButton active={panel === "layout"} onClick={() => setPanel(panel === "layout" ? null : "layout")} icon={<LayoutGrid size={15} />}>
             {split.layoutName}
           </ToolButton>
@@ -401,6 +414,7 @@ export function SplitView() {
           </AnimatePresence>
         </div>
       </div>
+      <AnimatePresence>{health === "monitor" ? <PlaybackMonitor key="monitor" layoutName={split.layoutName} onClose={() => setHealth(null)} /> : null}</AnimatePresence>
     </div>
   );
 }

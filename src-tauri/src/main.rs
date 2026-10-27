@@ -14,6 +14,7 @@ mod logging;
 mod config_transfer;
 mod flv_relay;
 mod js_worker;
+mod playback_stats;
 mod lan_sync;
 mod sync_transfer;
 mod platforms;
@@ -300,6 +301,7 @@ fn main() {
                 platforms::bilibili::danmaku::start_bilibili_danmaku_listener,
                 platforms::bilibili::danmaku::stop_bilibili_danmaku_listener,
                 proxy::start_proxy,
+                playback_stats::playback_native_stats,
                 proxy::stop_proxy,
                 proxy::start_static_proxy_server,
                 fetch_categories,
