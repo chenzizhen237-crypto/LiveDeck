@@ -29,8 +29,10 @@ function detect(): Locale {
   } catch {
     // ignore
   }
-  const nav = typeof navigator !== "undefined" ? navigator.language : "zh-CN";
-  return /^zh/i.test(nav) ? "zh-CN" : "en";
+  // Most of the app's copy is still hard-coded Chinese, so following the system
+  // language would mix languages. Until it's migrated, English is opt-in
+  // (the palette's language command); afterwards, use navigator.language here.
+  return "zh-CN";
 }
 
 let locale: Locale = typeof window !== "undefined" ? detect() : "zh-CN";

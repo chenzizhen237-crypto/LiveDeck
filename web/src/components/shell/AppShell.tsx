@@ -11,11 +11,23 @@ import { FollowTrigger } from "@/components/livedeck/FollowPopover";
 import { CategoryPopover } from "@/components/livedeck/CategoryPopover";
 import { SearchModal } from "@/components/livedeck/SearchModal";
 import { PerfHud } from "@/components/livedeck/PerfHud";
+import { PlatformMark } from "@/components/livedeck/primitives";
 import { PlaybackMonitorHost } from "@/components/metrics/PlaybackMonitorHost";
+import { CommandPaletteHost } from "@/components/command/CommandPalette";
+import { useRegisterCommands, type Command } from "@/services/commands";
+import { LayoutGrid, Search } from "lucide-react";
 import { SplitPickBanner, SplitView } from "@/components/split/SplitView";
 import { SplitProvider, useSplit } from "@/state/split/SplitProvider";
 import { PlayerOverlayHost, PlayerOverlayProvider, usePlayerOverlay } from "@/state/playerOverlay/PlayerOverlayProvider";
 import { useCategories, type CategoryItem, type UiPlatform } from "@/state/category/CategoryProvider";
+
+/** Platform marks as palette icons. */
+const PLATFORM_ICONS: Record<UiPlatform, Command["icon"]> = {
+  douyu: ({ size = 15 }) => <PlatformMark platform="douyu" size={size} />,
+  huya: ({ size = 15 }) => <PlatformMark platform="huya" size={size} />,
+  douyin: ({ size = 15 }) => <PlatformMark platform="douyin" size={size} />,
+  bilibili: ({ size = 15 }) => <PlatformMark platform="bilibili" size={size} />
+};
 
 const ROUTES: Record<UiPlatform, string> = { douyu: "/", douyin: "/douyin/", huya: "/huya/", bilibili: "/bilibili/" };
 
@@ -86,6 +98,27 @@ function Shell({ children }: { children: React.ReactNode }) {
 
   const scrollCtx = useMemo(() => onScroll, [onScroll]);
 
+  // Command palette: app-wide navigation lives here.
+  const shellCommands = useMemo<Command[]>(
+    () => [
+      { id: "app.search", group: "app", order: 1, title: "搜索主播、直播间或分类", icon: Search, keys: ["⌘", "K"], keywords: ["search", "find", "搜索"], run: () => setPanel("search") },
+      { id: "app.categories", group: "app", order: 3, title: "浏览分类", icon: LayoutGrid, keywords: ["category", "分类"], run: () => setPanel("categories") },
+      ...(["douyu", "huya", "douyin", "bilibili"] as const).map((p, i) => ({
+        id: `app.platform.${p}`,
+        group: "app" as const,
+        order: 10 + i,
+        title: `切换到${{ douyu: "斗鱼", huya: "虎牙", douyin: "抖音", bilibili: "B 站" }[p]}`,
+        icon: PLATFORM_ICONS[p],
+        keys: ["⌘", String(i + 1)],
+        bind: { code: `Digit${i + 1}`, meta: true },
+        keywords: [p],
+        run: () => goPlatform(p)
+      }))
+    ],
+    [goPlatform]
+  );
+  useRegisterCommands("shell", shellCommands);
+
   return (
     <div className="ld-root fixed inset-0 overflow-hidden font-sans">
       {/* macOS overlay title bar: keep the top strip draggable */}
@@ -111,6 +144,7 @@ function Shell({ children }: { children: React.ReactNode }) {
 
       <PerfHud />
       <PlaybackMonitorHost />
+      <CommandPaletteHost />
 
       <AnimatePresence>
         {panel === "categories" ? <CategoryPopover key="cat" platform={platform} onClose={() => setPanel(null)} onPick={pickCategory} /> : null}

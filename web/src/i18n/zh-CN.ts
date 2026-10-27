@@ -155,7 +155,25 @@ export const zhCN = {
   "mon.col.rx": "下行",
   "mon.col.note": "说明",
   "mon.events": "事件",
-  "mon.events.none": "暂无"
+  "mon.events.none": "暂无",
+  // ---- command palette
+  "palette.placeholder": "输入命令…",
+  "palette.empty": "没有匹配的命令",
+  "palette.group.room": "当前直播间",
+  "palette.group.split": "分屏",
+  "palette.group.app": "应用",
+  "palette.key.select": "选择",
+  "palette.key.run": "执行",
+  "palette.key.choose": "切换",
+  "palette.key.back": "返回上一级",
+  "palette.key.search": "切到搜索",
+  "palette.current": "当前",
+  "cmd.monitor": "打开播放监控",
+  "cmd.monitor.hint": "播放是否流畅、卡顿原因、能否再加一路",
+  "cmd.perfHud": "性能 HUD",
+  "cmd.perfHud.hint": "帧率与弹幕数量",
+  "cmd.language": "语言：切换到 English",
+  "cmd.language.hint": "界面语言（目前覆盖播放监控与命令面板）"
 };
 
 export type Dict = typeof zhCN;

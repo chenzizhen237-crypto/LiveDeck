@@ -4,7 +4,7 @@
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AnimatePresence, m } from "framer-motion";
-import { Loader2, RotateCw, SunMoon, UsersRound } from "lucide-react";
+import { Heart, Loader2, RotateCw, SunMoon, UsersRound } from "lucide-react";
 
 import { Avatar, IconButton, PLATFORM_META, PLATFORMS } from "./primitives";
 import { useIsland } from "./IslandProvider";
@@ -13,6 +13,7 @@ import { useTheme } from "@/state/theme/ThemeProvider";
 import { useOpenRoom } from "@/hooks/useOpenRoom";
 import { useImageProxy } from "@/hooks/useImageProxy";
 import { refreshOne } from "@/services/followRefresh";
+import { useRegisterCommands, type Command } from "@/services/commands";
 import type { UiPlatform } from "@/state/category/CategoryProvider";
 
 const CONCURRENCY = 2;
@@ -22,6 +23,12 @@ const toUi = (p: FollowedStreamer["platform"]) => p.toLowerCase() as UiPlatform;
 export function FollowTrigger() {
   const follow = useFollow();
   const [open, setOpen] = useState(false);
+  // Palette command + ⌘L, only while the trigger is on screen (it's hidden over the player).
+  const commands = useMemo<Command[]>(
+    () => [{ id: "app.follows", group: "app", order: 2, title: "打开关注列表", icon: Heart, keys: ["⌘", "L"], bind: { code: "KeyL", meta: true }, keywords: ["follow", "关注"], run: () => setOpen(true) }],
+    []
+  );
+  useRegisterCommands("follows", commands);
   const liveCount = follow.followedStreamers.filter((s) => s.liveStatus === "LIVE").length;
 
   return (

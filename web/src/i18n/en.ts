@@ -148,5 +148,22 @@ export const en: Dict = {
   "mon.col.rx": "Receive",
   "mon.col.note": "Notes",
   "mon.events": "Events",
-  "mon.events.none": "None yet"
+  "mon.events.none": "None yet",
+  "palette.placeholder": "Type a command…",
+  "palette.empty": "No matching commands",
+  "palette.group.room": "Current room",
+  "palette.group.split": "Split view",
+  "palette.group.app": "App",
+  "palette.key.select": "Select",
+  "palette.key.run": "Run",
+  "palette.key.choose": "Switch",
+  "palette.key.back": "Back",
+  "palette.key.search": "Search instead",
+  "palette.current": "Current",
+  "cmd.monitor": "Open playback monitor",
+  "cmd.monitor.hint": "Is playback smooth, why it stalls, can you add one more",
+  "cmd.perfHud": "Perf HUD",
+  "cmd.perfHud.hint": "Frame rate and danmaku count",
+  "cmd.language": "Language: switch to 中文",
+  "cmd.language.hint": "Interface language (covers the monitor and palette so far)"
 };

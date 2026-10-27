@@ -1,13 +1,14 @@
 // Split view (Nib: Desktop 11–17). A full-window grid of rooms over the channel
 // page, with the island above it and a floating toolbar below.
 
-import React, { useCallback, useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AnimatePresence, m } from "framer-motion";
 import { Check, GripVertical, LayoutDashboard, LayoutGrid, MessageSquareText, Minimize2, MoveDiagonal2, Plus, Scan, Trash2, TriangleAlert, Volume2 } from "lucide-react";
 
 import { PlatformMark } from "@/components/livedeck/primitives";
 import { PlaybackHealthChip } from "@/components/metrics/PlaybackHealthChip";
 import { openPlaybackMonitor } from "@/services/playbackMetrics/monitor";
+import { useRegisterCommands, type Command } from "@/services/commands";
 import { applyDanmuFontFamilyForOS } from "@/components/player/constants";
 import { usePlayerOverlay } from "@/state/playerOverlay/PlayerOverlayProvider";
 import { useSplit, type PickTarget } from "@/state/split/SplitProvider";
@@ -61,6 +62,26 @@ export function SplitView() {
   useEffect(() => () => window.clearTimeout(noticeTimer.current), []);
 
   const dock = useDockPosition();
+
+  const exitSplitRef = useRef<() => void>(() => {});
+  // Command palette: split actions while split view is open.
+  const splitCommands = useMemo<Command[]>(
+    () => [
+      { id: "split.add", group: "split", groupLabel: `分屏 · ${split.layoutName}`, title: "添加直播间", icon: Plus, keywords: ["add", "添加"], run: () => setPanel({ add: null }) },
+      {
+        id: "split.danmaku",
+        group: "split",
+        title: split.danmakuAll ? "弹幕：只显示有声画面" : "弹幕：所有画面都显示",
+        icon: MessageSquareText,
+        keywords: ["danmaku", "弹幕"],
+        run: () => split.setDanmakuAll(!split.danmakuAll)
+      },
+      { id: "split.edit", group: "split", title: "调整跨格", icon: Scan, keywords: ["span", "edit"], run: () => setEditing(true) },
+      { id: "split.exit", group: "split", title: "退出分屏", icon: Minimize2, keywords: ["exit", "close"], run: () => exitSplitRef.current() }
+    ],
+    [split]
+  );
+  useRegisterCommands("split", splitCommands);
 
   const gridAspect = () => {
     const b = gridRef.current?.getBoundingClientRect();
@@ -193,6 +214,7 @@ export function SplitView() {
     // Keep watching the room that had audio, full window.
     if (room) overlay.openPlayer({ platform: room.platform, roomId: room.roomId });
   };
+  exitSplitRef.current = exitSplit;
 
   const showDanmaku = (id: string) => split.danmakuAll || id === split.focusId;
 

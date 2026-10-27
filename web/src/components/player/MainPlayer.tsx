@@ -33,6 +33,8 @@ import { getBilibiliStreamConfig } from "@/platforms/bilibili/playerHelper";
 import { useImageProxy } from "@/hooks/useImageProxy";
 import { danmakuColor as douyuColor, holdRoomDanmaku, holdRoomProxy, subscribeDanmaku } from "@/services/roomSession";
 import { renameTile, setTileStatus, trackTilePlayer, untrackTile } from "@/services/playbackMetrics/monitor";
+import { useRegisterCommands, type Command } from "@/services/commands";
+import { Gauge, LayoutGrid, MessageSquareText, RefreshCw, Route } from "lucide-react";
 import { useFollow, type FollowedStreamer, type Platform as FollowPlatform } from "@/state/follow/FollowProvider";
 import { usePlayerUi } from "@/state/playerUi/PlayerUiProvider";
 import { useSplit } from "@/state/split/SplitProvider";
@@ -605,6 +607,91 @@ export function MainPlayer({
   useEffect(() => {
     if (playerAnchorName) renameTile(metricsIdRef.current, playerAnchorName);
   }, [playerAnchorName]);
+
+  // "Open in split" (island button and command palette share it).
+  const enterSplit = useCallback(() => {
+    split.openWith([
+      { platform: uiPlatform, roomId, anchorName: playerAnchorName ?? roomId, title: playerTitle ?? "", avatar: playerAvatar ?? "", isLive: playerIsLive !== false }
+    ]);
+    if (onRequestCloseAction) onRequestCloseAction();
+  }, [onRequestCloseAction, playerAnchorName, playerAvatar, playerIsLive, playerTitle, roomId, split, uiPlatform]);
+
+  // Command palette: this room's actions, registered while the player is open.
+  const roomCommands = useMemo<Command[]>(() => {
+    const lineKey = resolveCurrentLineFor(lineOptions, currentLine);
+    const cmds: Command[] = [
+      {
+        id: "room.refresh",
+        group: "room",
+        groupLabel: `当前直播间 · ${playerAnchorName || roomId}`,
+        title: "刷新直播间",
+        icon: RefreshCw,
+        keys: ["R"],
+        bind: { code: "KeyR" },
+        keywords: ["refresh", "reload"],
+        run: () => void reloadStreamRef.current?.("refresh")
+      },
+      {
+        id: "room.danmaku",
+        group: "room",
+        title: isDanmuEnabled ? "关闭弹幕" : "打开弹幕",
+        icon: MessageSquareText,
+        keys: ["D"],
+        bind: { code: "KeyD" },
+        keywords: ["danmaku", "弹幕"],
+        run: () => setIsDanmuEnabled((v) => !v)
+      },
+      {
+        id: "room.quality",
+        group: "room",
+        title: "画质…",
+        hint: `当前：${currentQuality}`,
+        icon: Gauge,
+        keys: ["Q"],
+        bind: { code: "KeyQ" },
+        keywords: ["quality"],
+        submenu: () =>
+          qualityOptions.map((q) => ({
+            id: q,
+            title: q,
+            current: q === currentQualityRef.current,
+            run: () => {
+              if (q === currentQualityRef.current) return;
+              setCurrentQuality(q);
+              try {
+                window.localStorage.setItem(`${platform}_preferred_quality`, q);
+              } catch {
+                // ignore
+              }
+            }
+          }))
+      }
+    ];
+    if (lineOptions.length > 1) {
+      cmds.push({
+        id: "room.line",
+        group: "room",
+        title: "线路…",
+        hint: `当前：${lineOptions.find((o) => o.key === lineKey)?.label ?? "—"}`,
+        icon: Route,
+        keywords: ["line", "cdn"],
+        submenu: () =>
+          lineOptions.map((o) => ({
+            id: o.key,
+            title: o.label,
+            current: o.key === resolveCurrentLineFor(lineOptionsRef.current, currentLineRef.current),
+            run: () => {
+              if (o.key === currentLineRef.current) return;
+              setCurrentLine(o.key);
+              persistLinePreference(platform, o.key);
+            }
+          }))
+      });
+    }
+    cmds.push({ id: "room.split", group: "room", title: "加入分屏", hint: "把这个直播间放进分屏", icon: LayoutGrid, keywords: ["split", "分屏"], run: enterSplit });
+    return cmds;
+  }, [currentLine, currentQuality, enterSplit, isDanmuEnabled, lineOptions, platform, playerAnchorName, roomId]);
+  useRegisterCommands("room", roomCommands);
 
   const destroyPlayer = useCallback(() => {
     metricsDetachRef.current?.();
@@ -1375,12 +1462,7 @@ export function MainPlayer({
         if (isFollowed) follow.unfollowStreamer(followPayload.platform, followPayload.id);
         else follow.followStreamer(followPayload);
       }}
-      onSplit={() => {
-        split.openWith([
-          { platform: uiPlatform, roomId, anchorName: playerAnchorName ?? roomId, title: playerTitle ?? "", avatar: playerAvatar ?? "", isLive: playerIsLive !== false }
-        ]);
-        if (onRequestCloseAction) onRequestCloseAction();
-      }}
+      onSplit={enterSplit}
     />
   );
 

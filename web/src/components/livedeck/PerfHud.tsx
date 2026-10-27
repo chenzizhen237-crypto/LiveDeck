@@ -2,7 +2,11 @@
 // danmaku/player changes can be judged in a live room, not just in a harness.
 // Also switches the danmaku engine for A/B (takes effect when a room reopens).
 
-import React, { useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { BarChart3 } from "lucide-react";
+
+import { useT } from "@/i18n";
+import { useRegisterCommands, type Command } from "@/services/commands";
 
 type Stats = { fps: number; p95: number; jank30s: number; worst30s: number; bullets: number };
 
@@ -13,6 +17,25 @@ export function PerfHud() {
   const [stats, setStats] = useState<Stats | null>(null);
   const [engine, setEngine] = useState<"new" | "legacy">("new");
   const frames = useRef<{ t: number; dt: number }[]>([]);
+  const { t } = useT();
+
+  const toggle = useCallback(() => {
+    setOpen((v) => {
+      const next = !v;
+      try {
+        window.localStorage.setItem("ld_perf_hud", next ? "1" : "0");
+      } catch {
+        // ignore
+      }
+      return next;
+    });
+  }, []);
+  // ⌘⇧P is the command palette now; the HUD is ⌘⌥P and a palette command.
+  const commands = useMemo<Command[]>(
+    () => [{ id: "app.perf", group: "app", order: 80, title: t("cmd.perfHud"), hint: t("cmd.perfHud.hint"), icon: BarChart3, keys: ["⌘", "⌥", "P"], keywords: ["perf", "fps", "hud"], run: toggle }],
+    [t, toggle]
+  );
+  useRegisterCommands("perf-hud", commands);
 
   useEffect(() => {
     try {
@@ -22,22 +45,15 @@ export function PerfHud() {
       // ignore
     }
     const onKey = (e: KeyboardEvent) => {
-      if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key.toLowerCase() === "p") {
+      // e.code: with ⌥ held, e.key is "π" on a Mac keyboard.
+      if ((e.metaKey || e.ctrlKey) && e.altKey && !e.shiftKey && e.code === "KeyP") {
         e.preventDefault();
-        setOpen((v) => {
-          const next = !v;
-          try {
-            window.localStorage.setItem("ld_perf_hud", next ? "1" : "0");
-          } catch {
-            // ignore
-          }
-          return next;
-        });
+        toggle();
       }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, []);
+  }, [toggle]);
 
   useEffect(() => {
     if (!open) return;
@@ -87,7 +103,7 @@ export function PerfHud() {
     <div className="pointer-events-auto fixed bottom-3 left-3 z-[900] w-[220px] rounded-xl border border-white/15 bg-black/75 p-3 font-mono text-[11px] leading-5 text-white backdrop-blur">
       <div className="mb-1 flex items-center justify-between font-sans text-xs font-bold">
         <span>Perf</span>
-        <span className="text-white/50">⌘⇧P</span>
+        <span className="text-white/50">⌘⌥P</span>
       </div>
       {stats ? (
         <>
