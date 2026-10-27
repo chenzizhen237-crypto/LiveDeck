@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { useRouter } from "@/router";
 import { invoke } from "@tauri-apps/api/core";
 import { v4 as uuidv4 } from "uuid";
@@ -34,6 +35,8 @@ import { danmakuColor as douyuColor, holdRoomDanmaku, holdRoomProxy, subscribeDa
 import { useFollow, type FollowedStreamer, type Platform as FollowPlatform } from "@/state/follow/FollowProvider";
 import { usePlayerUi } from "@/state/playerUi/PlayerUiProvider";
 import { useSplit } from "@/state/split/SplitProvider";
+import { useIsland } from "@/components/livedeck/IslandProvider";
+import { PlayerIslandBar } from "@/components/player/PlayerIslandBar";
 import type { UiPlatform } from "@/state/category/CategoryProvider";
 
 declare global {
@@ -514,6 +517,18 @@ export function MainPlayer({
   }, []);
 
   const chromeHiddenClass = chromeVisible ? "" : " player-chrome-hidden";
+
+  // The bar sits in the app's island; in player fullscreen the island is outside the
+  // fullscreen element, so a stand-in island is drawn over the video instead.
+  const { playerSlot, setPlayerChrome } = useIsland();
+  const islandSlot = playerSlot && !isFullScreen ? playerSlot : null;
+  useEffect(() => {
+    if (islandSlot) setPlayerChrome(chromeVisible);
+  }, [chromeVisible, islandSlot, setPlayerChrome]);
+  useEffect(() => {
+    if (!islandSlot) return;
+    return () => setPlayerChrome(null);
+  }, [islandSlot, setPlayerChrome]);
 
   const reloadStreamRef = useRef<
     | null
@@ -1311,6 +1326,32 @@ export function MainPlayer({
     };
   }, [platform, playerAnchorName, playerAvatar, playerTitle, roomId]);
 
+  const islandBar = (
+    <PlayerIslandBar
+      platform={uiPlatform}
+      roomId={roomId}
+      anchorName={playerAnchorName}
+      title={playerTitle}
+      avatar={playerAvatar}
+      status={isLoadingStream ? "loading" : playerIsLive === false ? "offline" : "live"}
+      followed={isFollowed}
+      onClose={() => {
+        if (onRequestCloseAction) onRequestCloseAction();
+        else router.back();
+      }}
+      onToggleFollow={() => {
+        if (isFollowed) follow.unfollowStreamer(followPayload.platform, followPayload.id);
+        else follow.followStreamer(followPayload);
+      }}
+      onSplit={() => {
+        split.openWith([
+          { platform: uiPlatform, roomId, anchorName: playerAnchorName ?? roomId, title: playerTitle ?? "", avatar: playerAvatar ?? "", isLive: playerIsLive !== false }
+        ]);
+        if (onRequestCloseAction) onRequestCloseAction();
+      }}
+    />
+  );
+
   return (
     <div
       className={`player-page${chromeHiddenClass}`}
@@ -1364,77 +1405,15 @@ export function MainPlayer({
         <div className="main-content">
           <div className="player-container player-container--solo">
             <div className="video-container">
-              <div className="player-topbar">
-                <div className="player-topbar-left">
-                  <button
-                    type="button"
-                    className="player-close-btn"
-                    title="关闭"
-                    aria-label="关闭"
-                    onClick={() => {
-                      if (onRequestCloseAction) onRequestCloseAction();
-                      else router.back();
-                    }}
-                  >
-                    <svg
-                      xmlns="http://www.w3.org/2000/svg"
-                      width="22"
-                      height="22"
-                      viewBox="0 0 24 24"
-                      fill="none"
-                      stroke="currentColor"
-                      strokeWidth="2.6"
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                    >
-                      <line x1="18" y1="6" x2="6" y2="18" />
-                      <line x1="6" y1="6" x2="18" y2="18" />
-                    </svg>
-                  </button>
-
-                  <div className="player-topbar-streamer" title={playerTitle || roomId}>
-                    <div className="player-topbar-avatar">
-                      {playerAvatar ? (
-                        <img src={getAvatarSrc(platform, playerAvatar)} alt={playerAnchorName ?? roomId} />
-                      ) : (
-                        <div className="player-topbar-avatarFallback">{(playerAnchorName || roomId || "D").charAt(0).toUpperCase()}</div>
-                      )}
-                    </div>
-                    <div className="player-topbar-meta">
-                      <div className="player-topbar-title">{playerTitle || roomId}</div>
-                      <div className="player-topbar-sub">
-                        {playerAnchorName || "未知主播"} · ID:{roomId}
-                      </div>
-                    </div>
-                    <div className={`player-topbar-status ${playerIsLive === false ? "is-offline" : "is-live"}`}>
-                      {isLoadingStream ? "加载中" : playerIsLive === false ? "未开播" : "直播中"}
-                    </div>
-                    <button
-                      type="button"
-                      className={`player-topbar-follow ${isFollowed ? "is-following" : ""}`}
-                      onClick={() => {
-                        if (isFollowed) follow.unfollowStreamer(followPayload.platform, followPayload.id);
-                        else follow.followStreamer(followPayload);
-                      }}
-                    >
-                      {isFollowed ? "取关" : "关注"}
-                    </button>
-                    <button
-                      type="button"
-                      className="player-topbar-follow"
-                      title="分屏：和其他直播间一起看"
-                      onClick={() => {
-                        split.openWith([
-                          { platform: uiPlatform, roomId, anchorName: playerAnchorName ?? roomId, title: playerTitle ?? "", avatar: playerAvatar ?? "", isLive: playerIsLive !== false }
-                        ]);
-                        if (onRequestCloseAction) onRequestCloseAction();
-                      }}
-                    >
-                      分屏
-                    </button>
+              {islandSlot ? (
+                createPortal(islandBar, islandSlot)
+              ) : (
+                <div className="player-topbar player-topbar--island">
+                  <div data-theme="dark" className="flex items-center gap-1 rounded-full border border-line-strong bg-glass p-1.5 text-fg shadow-float backdrop-blur-2xl">
+                    {islandBar}
                   </div>
                 </div>
-              </div>
+              )}
 
               <div ref={playerContainerRef} className="video-player" />
 

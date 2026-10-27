@@ -1,6 +1,8 @@
 // The floating island (Island motion page in LiveDeck UI.nib).
 //   Browse: D · Expanded at scroll 0, C · Compact once the page scrolls.
-//   Player: A · Rest (thin line) → B · Peek on hover → D · Expanded on click.
+//   Player: the open room's bar (close, streamer, follow, split) lives in the island,
+//   tucking to A · Rest (thin line) when the player hides its chrome.
+//   Split view: A · Rest → B · Peek on hover → D · Expanded on click.
 //   Capsules widen on hover (E); more than 4 rooms collapse into "+N" (H).
 //   Notifications (F, e.g. a followed streamer went live) take over briefly.
 
@@ -46,15 +48,29 @@ export function DynamicIsland({
   };
 
   const notification = island.notifications[0];
-  const state = notification ? "notify" : playerOpen ? reveal : compact ? "compact" : "open";
+  // A mounted player (overlay or the standalone route) owns the island.
+  const playerBar = island.playerChrome !== null;
+  const state = notification
+    ? "notify"
+    : playerBar
+      ? island.playerChrome
+        ? "player"
+        : "rest"
+      : playerOpen
+        ? reveal
+        : compact
+          ? "compact"
+          : "open";
 
   return (
     <div
       className="pointer-events-none fixed inset-x-0 top-0 z-[600] flex justify-center"
-      onMouseLeave={() => playerOpen && reveal !== "rest" && scheduleHide()}
+      // Over video the island is always the dark glass, whatever the app theme.
+      data-theme={playerOpen || playerBar ? "dark" : undefined}
+      onMouseLeave={() => playerOpen && !playerBar && reveal !== "rest" && scheduleHide()}
     >
-      {/* Hover strip that wakes the island while a stream is playing */}
-      {playerOpen && reveal === "rest" ? (
+      {/* Hover strip that wakes the island over split view */}
+      {playerOpen && !playerBar && reveal === "rest" ? (
         <div className="pointer-events-auto absolute inset-x-0 top-0 h-8" onMouseEnter={() => setReveal("peek")} />
       ) : null}
 
@@ -67,8 +83,10 @@ export function DynamicIsland({
         style={{ borderRadius: state === "notify" ? 28 : 999 }}
         onMouseEnter={() => hideTimer.current && window.clearTimeout(hideTimer.current)}
       >
+        {/* The player portals its bar in here; kept mounted so the portal target never goes away. */}
+        <div ref={island.setPlayerSlot} className={state === "player" ? "flex items-center gap-1 p-1.5" : "hidden"} />
         <AnimatePresence mode="popLayout" initial={false}>
-          {state === "rest" ? (
+          {state === "player" ? null : state === "rest" ? (
             <m.div key="rest" layout className="h-1 w-24 rounded-full bg-white/40" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} />
           ) : state === "peek" ? (
             <PeekContent key="peek" onClick={() => setReveal("open")} />

@@ -1572,64 +1572,6 @@ html.web-fs-active .danmu-panel {
   left: 84px;
 }
 
-.player-topbar-left {
-  display: flex;
-  align-items: center;
-  justify-content: flex-start;
-  gap: 12px;
-  min-width: 0;
-}
-
-.player-topbar-left .player-close-btn {
-  flex: 0 0 auto;
-}
-
-.player-topbar-left .player-topbar-streamer {
-  max-width: min(62vw, 720px);
-  min-width: 0;
-}
-
-.player-topbar-streamer {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 8px 12px;
-  border-radius: 999px;
-  background: rgba(10, 10, 12, 0.52);
-  border: 1px solid rgba(255, 255, 255, 0.14);
-  backdrop-filter: blur(18px) saturate(1.25);
-  -webkit-backdrop-filter: blur(18px) saturate(1.25);
-  box-shadow:
-    0 18px 46px rgba(0, 0, 0, 0.28),
-    0 0 0 1px rgba(255, 255, 255, 0.06) inset;
-  min-width: 0;
-}
-
-:root[data-theme="light"] .player-topbar-streamer {
-  background: rgba(10, 10, 12, 0.52);
-  border-color: rgba(255, 255, 255, 0.14);
-  box-shadow:
-    0 18px 46px rgba(0, 0, 0, 0.28),
-    0 0 0 1px rgba(255, 255, 255, 0.06) inset;
-}
-
-.player-topbar-avatar {
-  width: 32px;
-  height: 32px;
-  border-radius: 999px;
-  overflow: hidden;
-  flex: 0 0 auto;
-  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.12) inset;
-  background: rgba(255, 255, 255, 0.08);
-}
-
-.player-topbar-avatar img {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-  display: block;
-}
-
 .player-topbar-avatarFallback {
   width: 100%;
   height: 100%;
@@ -1644,89 +1586,6 @@ html.web-fs-active .danmu-panel {
 :root[data-theme="light"] .player-topbar-avatarFallback {
   color: rgba(255, 255, 255, 0.88);
   background: radial-gradient(120% 120% at 30% 20%, rgba(255, 255, 255, 0.18), rgba(255, 255, 255, 0.06));
-}
-
-.player-topbar-meta {
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
-}
-
-.player-topbar-title {
-  font-size: 13px;
-  font-weight: 900;
-  line-height: 1.1;
-  color: rgba(245, 247, 250, 0.95);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  max-width: 48vw;
-}
-
-:root[data-theme="light"] .player-topbar-title {
-  color: rgba(245, 247, 250, 0.95);
-}
-
-.player-topbar-sub {
-  margin-top: 2px;
-  font-size: 11px;
-  font-weight: 800;
-  color: rgba(245, 247, 250, 0.72);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  max-width: 48vw;
-}
-
-:root[data-theme="light"] .player-topbar-sub {
-  color: rgba(245, 247, 250, 0.72);
-}
-
-.player-topbar-status {
-  flex: 0 0 auto;
-  padding: 4px 10px;
-  border-radius: 999px;
-  font-size: 11px;
-  font-weight: 900;
-  letter-spacing: 0.02em;
-  background: rgba(34, 197, 94, 0.16);
-  border: 1px solid rgba(34, 197, 94, 0.34);
-  color: rgba(219, 255, 235, 0.95);
-}
-
-.player-topbar-status.is-offline {
-  background: rgba(148, 163, 184, 0.14);
-  border-color: rgba(148, 163, 184, 0.28);
-  color: rgba(226, 232, 240, 0.88);
-}
-
-:root[data-theme="light"] .player-topbar-status.is-offline {
-  color: rgba(226, 232, 240, 0.88);
-}
-
-.player-topbar-follow {
-  flex: 0 0 auto;
-  padding: 8px 12px;
-  border-radius: 999px;
-  font-size: 12px;
-  font-weight: 900;
-  letter-spacing: 0.01em;
-  color: rgba(255, 255, 255, 0.92);
-  background: rgba(10, 10, 12, 0.44);
-  border: 1px solid rgba(255, 255, 255, 0.14);
-  backdrop-filter: blur(18px) saturate(1.2);
-  -webkit-backdrop-filter: blur(18px) saturate(1.2);
-}
-
-.player-topbar-follow:hover {
-  background: rgba(10, 10, 12, 0.56);
-  border-color: rgba(255, 255, 255, 0.22);
-}
-
-.player-topbar-follow.is-following {
-  background: rgba(34, 197, 94, 0.16);
-  border-color: rgba(34, 197, 94, 0.34);
-  color: rgba(219, 255, 235, 0.95);
 }
 
 .player-topbar-right {
@@ -1794,17 +1653,6 @@ html.web-fs-active .danmu-panel {
   color: #ffffff;
 }
 
-:root[data-theme="light"] .player-topbar-follow {
-  color: rgba(255, 255, 255, 0.92);
-  background: rgba(10, 10, 12, 0.44);
-  border-color: rgba(255, 255, 255, 0.14);
-}
-
-:root[data-theme="light"] .player-topbar-follow:hover {
-  background: rgba(10, 10, 12, 0.56);
-  border-color: rgba(255, 255, 255, 0.22);
-}
-
 .player-page.player-chrome-hidden .player-topbar {
   opacity: 0;
   transform: translateY(-6px);
@@ -1815,61 +1663,6 @@ html.web-fs-active .danmu-panel {
   opacity: 0 !important;
   visibility: hidden !important;
   pointer-events: none !important;
-}
-
-.player-close-btn {
-  position: relative;
-  background: rgba(10, 10, 12, 0.62);
-  backdrop-filter: blur(18px) saturate(1.25);
-  -webkit-backdrop-filter: blur(18px) saturate(1.25);
-  border: 1px solid rgba(255, 255, 255, 0.18);
-  color: rgba(255, 255, 255, 0.92);
-  width: 44px;
-  height: 44px;
-  border-radius: 999px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  cursor: pointer;
-  transition: background 0.2s ease, border-color 0.2s ease;
-  padding: 0;
-  box-shadow:
-    0 22px 54px rgba(0, 0, 0, 0.32),
-    0 0 0 1px rgba(255, 255, 255, 0.08) inset;
-}
-
-.player-close-btn::before {
-  content: "";
-  position: absolute;
-  inset: -1px;
-  border-radius: inherit;
-  background: radial-gradient(90% 90% at 35% 30%, rgba(255, 255, 255, 0.22) 0%, rgba(255, 255, 255, 0.06) 40%, transparent 72%);
-  opacity: 0.55;
-  pointer-events: none;
-}
-
-.player-close-btn::after {
-  content: "";
-  position: absolute;
-  inset: 0;
-  border-radius: inherit;
-  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.08) inset;
-  opacity: 0.55;
-  pointer-events: none;
-}
-
-.player-close-btn:hover {
-  background: rgba(10, 10, 12, 0.72);
-  border-color: rgba(255, 255, 255, 0.24);
-}
-
-.player-close-btn:active {
-  transform: none;
-}
-
-.player-close-btn svg {
-  width: 22px;
-  height: 22px;
 }
 
 .danmu-panel-actions {
@@ -2295,13 +2088,6 @@ video.xgplayer-video {
     padding-left: 0;
   }
 
-  .player-close-btn {
-    top: 20px;
-    left: 16px;
-    width: 36px;
-    height: 36px;
-  }
-
   .player-container {
     padding: 0;
     gap: 0;
@@ -2458,23 +2244,6 @@ video.xgplayer-video {
   box-shadow: none;
 }
 
-:root[data-theme="light"] .player-close-btn {
-  background: rgba(10, 10, 12, 0.62);
-  border: 1px solid rgba(255, 255, 255, 0.18);
-  color: rgba(255, 255, 255, 0.92);
-  box-shadow:
-    0 22px 54px rgba(0, 0, 0, 0.32),
-    0 0 0 1px rgba(255, 255, 255, 0.08) inset;
-}
-
-:root[data-theme="light"] .player-close-btn:hover {
-  background: rgba(10, 10, 12, 0.72);
-  border-color: rgba(255, 255, 255, 0.24);
-  box-shadow:
-    0 24px 58px rgba(0, 0, 0, 0.34),
-    0 0 0 1px rgba(255, 255, 255, 0.1) inset;
-}
-
 :root[data-theme="light"] .empty-player,
 :root[data-theme="light"] .error-player,
 :root[data-theme="light"] .offline-player {
@@ -2542,4 +2311,10 @@ video.xgplayer-video {
 
 :root[data-theme="light"] .streamer-info-offline {
   border-bottom: 1px solid var(--border-color-light, #e0e0e0);
+}
+
+/* Player fullscreen: the app's island is outside the fullscreen element, so the
+   player draws a stand-in island at the top centre. */
+.player-topbar--island {
+  justify-content: center;
 }
