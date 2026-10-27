@@ -12,7 +12,17 @@ import { PlatformMark } from "@/components/livedeck/primitives";
 import type { UiPlatform } from "@/state/category/CategoryProvider";
 import { usePlaybackMonitor, type MonitorSnapshot } from "@/services/playbackMetrics/monitor";
 
-import { ADVICE_META, AdviceTag, Pill, STATE_META, Sparkline, TILE_HEALTH, TONE } from "./health";
+import { useT } from "@/i18n";
+import type { TileAssessment } from "@/services/playbackMetrics/model";
+
+import { AdviceTag, Pill, STATE_META, Sparkline, TILE_HEALTH, TONE, adviceKey } from "./health";
+
+/** State pill text for a tile, shared with the monitor table. */
+export function tileStateKey(t: TileAssessment) {
+  if (t.lifecycle === "buffering") return { key: "health.buffering" as const, tone: "bad" as const };
+  if (t.detail[0]?.key === "tile.reconnecting") return { key: "health.reconnecting" as const, tone: "bad" as const };
+  return { key: TILE_HEALTH[t.health].label, tone: TILE_HEALTH[t.health].tone };
+}
 
 export function PlaybackHealthChip({
   open,
@@ -27,6 +37,7 @@ export function PlaybackHealthChip({
   positionClass: string;
 }) {
   const snap = usePlaybackMonitor();
+  const { t, tm } = useT();
   if (!snap) return null;
   const a = snap.assessment;
   const meta = STATE_META[a.state];
@@ -40,13 +51,13 @@ export function PlaybackHealthChip({
         type="button"
         onClick={onToggle}
         aria-expanded={open}
-        title={a.headline}
+        title={tm(a.headline)}
         className={`flex items-center gap-1.5 rounded-full border px-2.5 py-[5px] text-xs font-semibold text-fg ${tone.soft} ${tone.ring} hover:brightness-110`}
       >
         <Icon size={14} className={`${tone.text} ${a.state === "observing" ? "animate-spin [animation-duration:2.4s]" : ""}`} />
-        <span className="whitespace-nowrap">{meta.short(healthyCount)}</span>
+        <span className="whitespace-nowrap">{t(meta.short, { n: healthyCount })}</span>
         <span className="size-[3px] rounded-full bg-fg-3" />
-        <span className="whitespace-nowrap font-medium text-fg-2">{ADVICE_META[a.advice].short}</span>
+        <span className="whitespace-nowrap font-medium text-fg-2">{t(adviceKey(a.advice, "short"))}</span>
         <ChevronDown size={12} className="text-fg-3" />
       </button>
       <AnimatePresence>{open ? <HealthPopover key="pop" snap={snap} onClose={onToggle} onOpenMonitor={onOpenMonitor} positionClass={positionClass} /> : null}</AnimatePresence>
@@ -56,6 +67,7 @@ export function PlaybackHealthChip({
 
 function HealthPopover({ snap, onClose, onOpenMonitor, positionClass }: { snap: MonitorSnapshot; onClose: () => void; onOpenMonitor: () => void; positionClass: string }) {
   const ref = useRef<HTMLDivElement>(null);
+  const { t, tm } = useT();
   const a = snap.assessment;
   const meta = STATE_META[a.state];
   const Icon = meta.icon;
@@ -73,7 +85,6 @@ function HealthPopover({ snap, onClose, onOpenMonitor, positionClass }: { snap: 
   // Worst affected tile's buffer, else the first counted tile.
   const focusId = a.affected[0] ?? a.tiles.find((t) => t.health !== "excluded")?.id;
   const focus = focusId ? labelOf(focusId) : undefined;
-  const advice = ADVICE_META[a.advice];
 
   return (
     <m.div
@@ -89,38 +100,39 @@ function HealthPopover({ snap, onClose, onOpenMonitor, positionClass }: { snap: 
           <Icon size={18} className={TONE[meta.tone].text} />
         </span>
         <div className="min-w-0">
-          <div className="text-[15px] font-bold">{a.headline}</div>
-          <div className="mt-0.5 text-xs text-fg-2">{a.detail}</div>
+          <div className="text-[15px] font-bold">{tm(a.headline)}</div>
+          <div className="mt-0.5 text-xs text-fg-2">{tm(a.detail)}</div>
         </div>
       </div>
 
       <div className="flex items-center gap-2 rounded-[10px] bg-raised px-2.5 py-2">
         <AdviceTag advice={a.advice} />
-        <span className="text-xs text-fg-2">{advice.explain}</span>
+        <span className="text-xs text-fg-2">{t(adviceKey(a.advice, "explain"))}</span>
       </div>
 
       {a.affected.length ? (
         <div className="flex flex-col gap-1.5">
-          <div className="text-[10px] font-bold tracking-[0.08em] text-fg-3">受影响的画面</div>
+          <div className="text-[10px] font-bold tracking-[0.08em] text-fg-3">{t("pop.affected")}</div>
           {a.affected.map((id) => {
-            const t = a.tiles.find((x) => x.id === id)!;
+            const tile = a.tiles.find((x) => x.id === id)!;
             const v = labelOf(id);
+            const st = tileStateKey(tile);
             return (
               <div key={id} className="flex items-center gap-2.5 rounded-[10px] bg-raised px-2.5 py-2">
                 {v ? <PlatformMark platform={v.platform as UiPlatform} size={18} /> : null}
                 <div className="min-w-0 flex-1">
                   <div className="truncate text-xs font-semibold">{v?.label ?? id}</div>
-                  <div className="truncate text-[11px] text-fg-2">{t.detail}</div>
+                  <div className="truncate text-[11px] text-fg-2">{tm(tile.detail)}</div>
                 </div>
-                <Pill tone={t.lifecycle === "buffering" || t.detail === "重连中" ? "bad" : "warn"}>{t.lifecycle === "buffering" ? "缓冲中" : t.detail === "重连中" ? "重连中" : TILE_HEALTH[t.health].label}</Pill>
+                <Pill tone={st.tone === "bad" ? "bad" : "warn"}>{t(st.key)}</Pill>
               </div>
             );
           })}
         </div>
       ) : a.evidence.length ? (
         <ul className="flex flex-col gap-1 text-xs text-fg-2">
-          {a.evidence.map((e) => (
-            <li key={e}>· {e}</li>
+          {a.evidence.map((e, i) => (
+            <li key={i}>· {tm(e)}</li>
           ))}
         </ul>
       ) : null}
@@ -128,7 +140,7 @@ function HealthPopover({ snap, onClose, onOpenMonitor, positionClass }: { snap: 
       {focus ? (
         <div className="flex flex-col gap-1.5">
           <div className="flex items-center text-[10px] font-bold tracking-[0.08em] text-fg-3">
-            近期 · 前向缓冲 · {focus.label}
+            {t("pop.recentBuffer", { label: focus.label })}
             <span className="flex-1" />
             <span className="font-mono font-medium">60 s</span>
           </div>
@@ -140,7 +152,7 @@ function HealthPopover({ snap, onClose, onOpenMonitor, positionClass }: { snap: 
 
       <div className="flex items-start gap-2 text-[11px] text-fg-3">
         <Info size={13} className="mt-px shrink-0" />
-        未验证：你的网络带宽或剩余解码能力。不会自动添加、降画质或关闭画面。
+        {t("pop.notVerified")}
       </div>
       <div className="flex justify-end">
         <button
@@ -152,7 +164,7 @@ function HealthPopover({ snap, onClose, onOpenMonitor, positionClass }: { snap: 
           className="flex items-center gap-1.5 rounded-full bg-chip px-4 py-1.5 text-xs font-bold text-fg-2 hover:bg-hover"
         >
           <Gauge size={14} />
-          打开播放监控
+          {t("pop.openMonitor")}
         </button>
       </div>
     </m.div>

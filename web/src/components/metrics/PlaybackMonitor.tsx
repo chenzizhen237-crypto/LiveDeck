@@ -14,7 +14,10 @@ import type { UiPlatform } from "@/state/category/CategoryProvider";
 import { HISTORY_MS } from "@/services/playbackMetrics/model";
 import { usePlaybackMonitor, type MonitorEvent, type MonitorSnapshot } from "@/services/playbackMetrics/monitor";
 
-import { ADVICE_META, AdviceTag, Pill, STATE_META, Sparkline, TILE_HEALTH, TONE, fmt, type Tone } from "./health";
+import { useT } from "@/i18n";
+
+import { AdviceTag, Pill, STATE_META, Sparkline, TONE, adviceKey, fmt, type Tone } from "./health";
+import { tileStateKey } from "./PlaybackHealthChip";
 
 const SERIES = 60;
 
@@ -46,16 +49,10 @@ function useSeries(snap: MonitorSnapshot | null) {
 const cap = "text-[10px] font-bold tracking-[0.08em] text-fg-3";
 const card = "rounded-[14px] border border-line bg-surface p-4";
 
-function mmss(ms: number) {
-  const s = Math.max(0, Math.floor(ms / 1000));
-  return `${Math.floor(s / 60)} 分 ${String(s % 60).padStart(2, "0")} 秒`;
-}
 
-export function PlaybackMonitor({ onClose, layoutName }: { onClose: () => void; layoutName: string }) {
+export function PlaybackMonitor({ onClose }: { onClose: () => void }) {
   const snap = usePlaybackMonitor();
   const series = useSeries(snap);
-
-  // Esc: closed by the host's Esc chain (SplitView).
 
   return createPortal(
     <m.div
@@ -64,10 +61,10 @@ export function PlaybackMonitor({ onClose, layoutName }: { onClose: () => void; 
       animate={{ opacity: 1 }}
       exit={{ opacity: 0 }}
       transition={{ duration: 0.15 }}
-      className="fixed inset-0 z-[600] overflow-y-auto bg-app/95 font-sans text-fg backdrop-blur-xl"
+      className="fixed inset-0 z-[720] overflow-y-auto bg-app/95 font-sans text-fg backdrop-blur-xl"
     >
       <div className="mx-auto flex max-w-[1440px] flex-col gap-3.5 px-6 pt-12 pb-6">
-        {snap ? <Body snap={snap} series={series} onClose={onClose} layoutName={layoutName} /> : <Empty onClose={onClose} />}
+        {snap ? <Body snap={snap} series={series} onClose={onClose} /> : <Empty onClose={onClose} />}
       </div>
     </m.div>,
     document.body
@@ -75,10 +72,11 @@ export function PlaybackMonitor({ onClose, layoutName }: { onClose: () => void; 
 }
 
 function Empty({ onClose }: { onClose: () => void }) {
+  const { t } = useT();
   return (
     <div className="flex items-center gap-3">
-      <span className="text-lg font-bold">播放监控</span>
-      <span className="text-sm text-fg-2">分屏里没有正在播放的画面。</span>
+      <span className="text-lg font-bold">{t("mon.title")}</span>
+      <span className="text-sm text-fg-2">{t("mon.empty")}</span>
       <span className="flex-1" />
       <CloseButton onClose={onClose} />
     </div>
@@ -86,17 +84,20 @@ function Empty({ onClose }: { onClose: () => void }) {
 }
 
 function CloseButton({ onClose }: { onClose: () => void }) {
+  const { t } = useT();
   return (
-    <button type="button" onClick={onClose} aria-label="关闭播放监控" className="grid size-9 place-items-center rounded-full bg-chip text-fg-2 hover:bg-hover">
+    <button type="button" onClick={onClose} aria-label={t("mon.close")} className="grid size-9 place-items-center rounded-full bg-chip text-fg-2 hover:bg-hover">
       <X size={16} />
     </button>
   );
 }
 
-function Body({ snap, series, onClose, layoutName }: { snap: MonitorSnapshot; series: ReturnType<typeof useSeries>; onClose: () => void; layoutName: string }) {
+function Body({ snap, series, onClose }: { snap: MonitorSnapshot; series: ReturnType<typeof useSeries>; onClose: () => void }) {
+  const { t, tm } = useT();
   const a = snap.assessment;
   const meta = STATE_META[a.state];
   const Icon = meta.icon;
+  const observedS = Math.max(0, Math.floor((snap.now - snap.startedAt) / 1000));
   const counted = a.tiles.filter((t) => t.health !== "excluded").length;
 
   return (
@@ -107,15 +108,16 @@ function Body({ snap, series, onClose, layoutName }: { snap: MonitorSnapshot; se
           <Activity size={18} className="text-accent" />
         </span>
         <div>
-          <div className="text-lg font-bold">播放监控</div>
+          <div className="text-lg font-bold">{t("mon.title")}</div>
           <div className="text-xs text-fg-2">
-            分屏 {layoutName} · {snap.tiles.length} 路画面 · 已观察 {mmss(snap.now - snap.startedAt)} · 负载 v{snap.workloadVersion}
+            {snap.tiles.length === 1 ? t("mon.single") : t("mon.split", { n: snap.tiles.length })} ·{" "}
+            {t("mon.observedFor", { m: Math.floor(observedS / 60), s: String(observedS % 60).padStart(2, "0") })} · {t("mon.workload", { v: snap.workloadVersion })}
           </div>
         </div>
         <span className="flex-1" />
         <span className={`flex items-center gap-1.5 rounded-full border px-2.5 py-[5px] text-xs font-semibold ${TONE[meta.tone].soft} ${TONE[meta.tone].ring}`}>
           <Icon size={14} className={TONE[meta.tone].text} />
-          {a.headline}
+          {tm(a.headline)}
         </span>
         <CloseButton onClose={onClose} />
       </div>
@@ -125,23 +127,23 @@ function Body({ snap, series, onClose, layoutName }: { snap: MonitorSnapshot; se
         <div className={`${card} flex flex-1 flex-col gap-2.5 ${a.state === "healthy" || a.state === "observing" ? "" : TONE[meta.tone].ring}`}>
           <div className="flex items-center gap-2.5">
             <Icon size={18} className={TONE[meta.tone].text} />
-            <span className="text-[15px] font-bold">{a.headline}</span>
+            <span className="text-[15px] font-bold">{tm(a.headline)}</span>
             <span className="flex-1" />
-            <span className="text-[11px] text-fg-3">{a.state === "healthy" || a.state === "observing" ? "观察结果" : "推断 · 依据如下"}</span>
+            <span className="text-[11px] text-fg-3">{t(a.state === "healthy" || a.state === "observing" ? "mon.observation" : "mon.hypothesis")}</span>
           </div>
-          <div className="text-xs text-fg-2">{a.detail}</div>
+          <div className="text-xs text-fg-2">{tm(a.detail)}</div>
           <ul className="flex flex-col gap-1.5">
-            {a.evidence.map((e) => (
-              <li key={e} className="flex items-start gap-2 text-xs text-fg-2">
-                {/^无本机压力|^No local/.test(e) ? <CircleMinus size={14} className="mt-px shrink-0 text-fg-3" /> : <CircleCheck size={14} className={`mt-px shrink-0 ${TONE[meta.tone].text}`} />}
-                {e}
+            {a.evidence.map((e, i) => (
+              <li key={i} className="flex items-start gap-2 text-xs text-fg-2">
+                {e.key === "ev.noLocal" ? <CircleMinus size={14} className="mt-px shrink-0 text-fg-3" /> : <CircleCheck size={14} className={`mt-px shrink-0 ${TONE[meta.tone].text}`} />}
+                {tm(e)}
               </li>
             ))}
           </ul>
           <div className="h-px bg-line" />
           <div className="flex items-center gap-2.5">
             <AdviceTag advice={a.advice} />
-            <span className="text-xs text-fg-2">{ADVICE_META[a.advice].explain}</span>
+            <span className="text-xs text-fg-2">{t(adviceKey(a.advice, "explain"))}</span>
           </div>
         </div>
         <Coverage snap={snap} counted={counted} />
@@ -149,22 +151,22 @@ function Body({ snap, series, onClose, layoutName }: { snap: MonitorSnapshot; se
 
       {/* stat cards: worst tile, never averaged */}
       <div className="grid grid-cols-5 gap-3">
-        <Stat label="卡顿率 · 最差" value={a.worst.rebuffer ? (a.worst.rebuffer.value * 100).toFixed(1) : "—"} unit="%" sub={a.worst.rebuffer ? `${a.worst.rebuffer.tile} · 30 秒` : "暂无可计数的播放"} tone={toneFor(a.worst.rebuffer?.value ?? null, 0.005, 0.02)} values={series.rebuffer} />
-        <Stat label="最长中断" value={a.worst.longestStall ? a.worst.longestStall.value.toFixed(1) : "—"} unit="s" sub={a.worst.longestStall ? a.worst.longestStall.tile : "—"} tone={toneFor(a.worst.longestStall?.value ?? null, 0.5, 1)} values={series.stall} />
+        <Stat label={t("mon.stat.rebuffer")} value={a.worst.rebuffer ? (a.worst.rebuffer.value * 100).toFixed(1) : "—"} unit="%" sub={a.worst.rebuffer ? t("mon.stat.window30", { label: a.worst.rebuffer.tile }) : t("mon.stat.noCounted")} tone={toneFor(a.worst.rebuffer?.value ?? null, 0.005, 0.02)} values={series.rebuffer} />
+        <Stat label={t("mon.stat.longest")} value={a.worst.longestStall ? a.worst.longestStall.value.toFixed(1) : "—"} unit="s" sub={a.worst.longestStall ? a.worst.longestStall.tile : "—"} tone={toneFor(a.worst.longestStall?.value ?? null, 0.5, 1)} values={series.stall} />
         <Stat
-          label="掉帧率 · 最差"
+          label={t("mon.stat.drops")}
           value={a.worst.dropRatio ? (a.worst.dropRatio.value * 100).toFixed(1) : "—"}
           unit="%"
-          sub={`${a.worst.dropRatio ? a.worst.dropRatio.tile : "无可用计数"} · ${snap.coverage.frames[0]}/${snap.coverage.frames[1]} 路可测`}
+          sub={`${a.worst.dropRatio ? a.worst.dropRatio.tile : t("mon.stat.noFrames")} · ${t("mon.stat.framesCovered", { a: snap.coverage.frames[0], b: snap.coverage.frames[1] })}`}
           tone={toneFor(a.worst.dropRatio?.value ?? null, 0.005, 0.01)}
           values={series.drops}
         />
-        <Stat label="界面延迟 p95" value={snap.device.uiDelayP95 === null ? "—" : String(Math.round(snap.device.uiDelayP95))} unit="ms" sub="主线程调度" tone={toneFor(snap.device.uiDelayP95, 25, 50)} values={series.ui} />
+        <Stat label={t("mon.stat.ui")} value={snap.device.uiDelayP95 === null ? "—" : String(Math.round(snap.device.uiDelayP95))} unit="ms" sub={t("mon.stat.mainThread")} tone={toneFor(snap.device.uiDelayP95, 25, 50)} values={series.ui} />
         <Stat
-          label="下行 · 网络边界"
+          label={t("mon.stat.net")}
           value={snap.network.mbps === null ? "—" : snap.network.mbps.toFixed(1)}
           unit="Mbps"
-          sub={snap.network.uncovered.length ? `${snap.network.uncovered.length} 路未覆盖` : "每个连接只计一次"}
+          sub={snap.network.uncovered.length ? t("mon.stat.uncovered", { n: snap.network.uncovered.length }) : t("mon.stat.onceEach")}
           tone={snap.network.mbps === null ? "unknown" : "observe"}
           values={series.net}
         />
@@ -204,16 +206,17 @@ function Stat({ label, value, unit, sub, tone, values }: { label: string; value:
 }
 
 function Coverage({ snap, counted }: { snap: MonitorSnapshot; counted: number }) {
+  const { t } = useT();
   const rows: [string, string, Tone, string?][] = [
-    ["缓冲与卡顿", `${snap.coverage.buffer[0]} / ${snap.coverage.buffer[1]}`, snap.coverage.buffer[0] === counted ? "good" : "warn"],
-    ["帧计数", `${snap.coverage.frames[0]} / ${snap.coverage.frames[1]}`, snap.coverage.frames[0] === counted ? "good" : "warn", snap.coverage.frames[0] < counted ? "部分画面不支持" : undefined],
-    ["传输 · 本地中转", `${snap.coverage.relay} 路 FLV`, "good"],
-    ["传输 · HLS", `${snap.coverage.hls} 路`, "good"],
-    ["本机指标", snap.coverage.native ? "CPU" : "不可用", snap.coverage.native ? "good" : "unknown", "无 GPU / 视频引擎数据"]
+    [t("mon.cov.buffer"), `${snap.coverage.buffer[0]} / ${snap.coverage.buffer[1]}`, snap.coverage.buffer[0] === counted ? "good" : "warn"],
+    [t("mon.cov.frames"), `${snap.coverage.frames[0]} / ${snap.coverage.frames[1]}`, snap.coverage.frames[0] === counted ? "good" : "warn", snap.coverage.frames[0] < counted ? t("mon.cov.framesPartial") : undefined],
+    [t("mon.cov.relay"), t("mon.cov.relayValue", { n: snap.coverage.relay }), "good"],
+    [t("mon.cov.hls"), t("mon.cov.hlsValue", { n: snap.coverage.hls }), "good"],
+    [t("mon.cov.native"), snap.coverage.native ? "CPU" : t("mon.cov.nativeNA"), snap.coverage.native ? "good" : "unknown", t("mon.cov.noGpu")]
   ];
   return (
     <div className={`${card} flex w-[380px] shrink-0 flex-col gap-2.5`}>
-      <div className={cap}>覆盖范围</div>
+      <div className={cap}>{t("mon.cov.title")}</div>
       {rows.map(([k, v, tone, note]) => (
         <div key={k} className="flex items-center gap-2 text-xs">
           <span className={`size-1.5 rounded-full ${TONE[tone].dot}`} />
@@ -223,7 +226,7 @@ function Coverage({ snap, counted }: { snap: MonitorSnapshot; counted: number })
           <span className="font-mono text-[11px] font-semibold">{v}</span>
         </div>
       ))}
-      <div className="text-[11px] text-fg-3">不显示容量数字：播放正常不代表还有剩余带宽或解码余量。</div>
+      <div className="text-[11px] text-fg-3">{t("mon.cov.noCapacity")}</div>
     </div>
   );
 }
@@ -241,20 +244,21 @@ const LANE: Record<string, { cls: string; thin?: boolean }> = {
 };
 
 function Timeline({ snap }: { snap: MonitorSnapshot }) {
+  const { t } = useT();
   const from = snap.now - HISTORY_MS;
   const x = (t: number) => `${Math.max(0, ((t - from) / HISTORY_MS) * 100)}%`;
   const w = (a: number, b: number) => `${Math.max(0.25, ((Math.min(b, snap.now) - Math.max(a, from)) / HISTORY_MS) * 100)}%`;
   const legend: [string, string][] = [
-    ["bg-online/40", "播放"],
-    ["bg-live", "缓冲 / 卡顿"],
-    ["bg-replay", "重连"],
-    ["bg-accent", "连接中"],
-    ["bg-fg-3/35", "隐藏 / 暂停（不计入）"]
+    ["bg-online/40", t("mon.tl.playing")],
+    ["bg-live", t("mon.tl.stall")],
+    ["bg-replay", t("mon.tl.reconnect")],
+    ["bg-accent", t("mon.tl.connecting")],
+    ["bg-fg-3/35", t("mon.tl.hidden")]
   ];
   return (
     <div className={`${card} flex flex-col gap-2`}>
       <div className="flex items-center gap-3.5">
-        <span className={cap}>画面状态 · 最近 5 分钟</span>
+        <span className={cap}>{t("mon.tl.title")}</span>
         <span className="flex-1" />
         {legend.map(([c, l]) => (
           <span key={l} className="flex items-center gap-1.5 text-[11px] text-fg-2">
@@ -263,14 +267,14 @@ function Timeline({ snap }: { snap: MonitorSnapshot }) {
           </span>
         ))}
       </div>
-      {snap.tiles.map((t) => (
-        <div key={t.id} className="flex items-center gap-2.5">
+      {snap.tiles.map((tile) => (
+        <div key={tile.id} className="flex items-center gap-2.5">
           <div className="flex w-[150px] shrink-0 items-center gap-1.5 truncate text-[11px] font-semibold text-fg-2">
-            <PlatformMark platform={t.platform as UiPlatform} size={14} />
-            <span className="truncate">{t.label}</span>
+            <PlatformMark platform={tile.platform as UiPlatform} size={14} />
+            <span className="truncate">{tile.label}</span>
           </div>
           <div className="relative h-3.5 flex-1 overflow-hidden rounded bg-raised">
-            {t.timeline
+            {tile.timeline
               .filter((r) => r.to >= from)
               .map((r, i) => {
                 const lane = LANE[r.lifecycle] ?? LANE.offline;
@@ -282,7 +286,7 @@ function Timeline({ snap }: { snap: MonitorSnapshot }) {
       <div className="flex gap-2.5">
         <span className="w-[150px] shrink-0" />
         <div className="flex flex-1 justify-between font-mono text-[10px] text-fg-3">
-          {["−5:00", "−4:00", "−3:00", "−2:00", "−1:00", "现在"].map((l) => (
+          {["−5:00", "−4:00", "−3:00", "−2:00", "−1:00", t("mon.tl.now")].map((l) => (
             <span key={l}>{l}</span>
           ))}
         </div>
@@ -292,6 +296,7 @@ function Timeline({ snap }: { snap: MonitorSnapshot }) {
 }
 
 function TileTable({ snap }: { snap: MonitorSnapshot }) {
+  const { t, tm } = useT();
   const order = { warning: 0, observing: 1, unknown: 2, healthy: 3, excluded: 4 } as const;
   const rows = [...snap.assessment.tiles].sort((x, y) => order[x.health] - order[y.health]);
   const th = `${cap} text-left font-bold`;
@@ -300,7 +305,7 @@ function TileTable({ snap }: { snap: MonitorSnapshot }) {
       <table className="w-full border-separate border-spacing-y-0.5 text-xs">
         <thead>
           <tr>
-            {["画面", "状态", "实际", "缓冲", "掉帧", "卡顿率", "最长", "下行", "说明"].map((h) => (
+            {(["mon.col.stream", "mon.col.state", "mon.col.actual", "mon.col.buffer", "mon.col.drops", "mon.col.rebuffer", "mon.col.longest", "mon.col.rx", "mon.col.note"] as const).map((k) => t(k)).map((h) => (
               <th key={h} className={`${th} px-1.5 pb-1.5`}>
                 {h}
               </th>
@@ -308,22 +313,22 @@ function TileTable({ snap }: { snap: MonitorSnapshot }) {
           </tr>
         </thead>
         <tbody>
-          {rows.map((t) => {
-            const v = snap.tiles.find((x) => x.id === t.id);
-            const h = TILE_HEALTH[t.health];
-            const mx = t.metrics;
+          {rows.map((row) => {
+            const v = snap.tiles.find((x) => x.id === row.id);
+            const st = tileStateKey(row);
+            const mx = row.metrics;
             const draining = mx.bufferSlope !== null && mx.bufferSlope < -0.05;
             const mono = "px-1.5 py-1.5 font-mono text-[11px] whitespace-nowrap";
             return (
-              <tr key={t.id} className={t.health === "warning" ? "bg-live/10" : ""}>
+              <tr key={row.id} className={row.health === "warning" ? "bg-live/10" : ""}>
                 <td className="rounded-l-lg px-1.5 py-1.5">
                   <span className="flex items-center gap-1.5 font-semibold">
                     {v ? <PlatformMark platform={v.platform as UiPlatform} size={16} /> : null}
-                    <span className="max-w-[140px] truncate">{v?.label ?? t.id}</span>
+                    <span className="max-w-[140px] truncate">{v?.label ?? row.id}</span>
                   </span>
                 </td>
                 <td className="px-1.5">
-                  <Pill tone={t.lifecycle === "buffering" ? "bad" : h.tone}>{t.lifecycle === "buffering" ? "缓冲中" : t.detail === "重连中" ? "重连中" : h.label}</Pill>
+                  <Pill tone={st.tone}>{t(st.key)}</Pill>
                 </td>
                 <td className={`${mono} text-fg-2`}>{v ? fmt.profile(v.profile, v.transport) : "—"}</td>
                 <td className={`${mono} ${mx.bufferAhead !== null && mx.bufferAhead < 1 ? "text-replay" : ""}`}>
@@ -333,7 +338,7 @@ function TileTable({ snap }: { snap: MonitorSnapshot }) {
                 <td className={`${mono} ${mx.rebufferRatio && mx.rebufferRatio > 0.02 ? "text-live" : ""}`}>{fmt.pct(mx.rebufferRatio)}</td>
                 <td className={`${mono} ${mx.longestStallS && mx.longestStallS >= 1 ? "text-replay" : ""}`}>{fmt.s(mx.longestStallS)}</td>
                 <td className={mono}>{fmt.mbps(mx.rxMbps)}</td>
-                <td className="max-w-[260px] truncate rounded-r-lg px-1.5 text-fg-2">{t.excludedReason ? `${t.detail}` : t.detail}</td>
+                <td className="max-w-[260px] truncate rounded-r-lg px-1.5 text-fg-2">{tm(row.detail)}</td>
               </tr>
             );
           })}
@@ -344,15 +349,16 @@ function TileTable({ snap }: { snap: MonitorSnapshot }) {
 }
 
 function Events({ events }: { events: MonitorEvent[] }) {
+  const { t, tm, locale } = useT();
   return (
     <div className={`${card} flex w-[330px] shrink-0 flex-col gap-2`}>
-      <div className={cap}>事件</div>
-      {events.length === 0 ? <div className="text-xs text-fg-3">暂无</div> : null}
+      <div className={cap}>{t("mon.events")}</div>
+      {events.length === 0 ? <div className="text-xs text-fg-3">{t("mon.events.none")}</div> : null}
       {events.slice(0, 14).map((e, i) => (
         <div key={i} className="flex items-start gap-2 text-[11px]">
-          <span className="shrink-0 font-mono text-[10px] text-fg-3">{new Date(e.at).toLocaleTimeString("zh-CN", { hour12: false })}</span>
+          <span className="shrink-0 font-mono text-[10px] text-fg-3">{new Date(e.at).toLocaleTimeString(locale, { hour12: false })}</span>
           <span className={`mt-1 size-1.5 shrink-0 rounded-full ${TONE[e.tone].dot}`} />
-          <span className="text-fg-2">{e.text}</span>
+          <span className="text-fg-2">{tm(e.text)}</span>
         </div>
       ))}
     </div>

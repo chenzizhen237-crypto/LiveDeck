@@ -9,6 +9,8 @@ import { useSyncExternalStore } from "react";
 
 import {
   MetricsModel,
+  msg,
+  type Msg,
   type Lifecycle,
   type StreamProfile,
   type SystemAssessment,
@@ -22,12 +24,16 @@ const NATIVE_EVERY = 2;
 /** A heartbeat this late means sleep / suspended timers: discard rates spanning it. */
 const DISCONTINUITY_MS = 5000;
 const EVENT_LOG_MAX = 60;
+/** No rendered frame for this long: the window is off-screen/occluded (WebKit stops frames, keeps visibilityState "visible"). */
+const FRAME_STALL_MS = 500;
+/** After frames come back, buffers and media time catch up; don't judge that transient. */
+const RESUME_GRACE_MS = 3000;
 
 export interface MonitorEvent {
   at: number; // Date.now()
   tone: "good" | "warn" | "bad" | "observe" | "unknown";
   icon: string;
-  text: string;
+  text: Msg;
 }
 
 export interface TileView {
@@ -84,8 +90,24 @@ let lastState: string | null = null;
 let native: { relay: { key: string; upstream_bytes: number; connections: number }[]; at: number } | null = null;
 let relayRate = new Map<string, number>();
 let hasNative = false;
+// Frame heartbeat: the only reliable "is this window actually on screen" signal.
+let lastFrame = 0;
+let rafId = 0;
+let graceUntil = 0;
+let wasRendering = true;
 
-function log(tone: MonitorEvent["tone"], icon: string, text: string) {
+function frameLoop(t: number) {
+  if (lastFrame && t - lastFrame > 1000) graceUntil = t + RESUME_GRACE_MS;
+  lastFrame = t;
+  rafId = requestAnimationFrame(frameLoop);
+}
+
+/** Visible and actually rendering, outside the post-resume grace period. */
+function isRendering(now: number) {
+  return !document.hidden && now - lastFrame < FRAME_STALL_MS && now >= graceUntil;
+}
+
+function log(tone: MonitorEvent["tone"], icon: string, text: Msg) {
   events = [{ at: Date.now(), tone, icon, text }, ...events].slice(0, EVENT_LOG_MAX);
 }
 
@@ -125,7 +147,7 @@ export function trackTilePlayer(opts: TrackOptions, player: any): () => void {
     model.newEpoch(opts.id, now);
   } else {
     model.register(info, now);
-    log("observe", "layers", `${opts.label} 已加入 · 重新观察`);
+    log("observe", "layers", msg("log.tileAdded", { label: opts.label }));
   }
   const t: Tracked = existing ?? { info, player: null, status: "connecting", waiting: false, hls: null, hlsBytes: 0, detach: null };
   Object.assign(t, { info, player, status: "connecting", waiting: false, hls: null, hlsBytes: 0 });
@@ -151,13 +173,22 @@ export function trackTilePlayer(opts: TrackOptions, player: any): () => void {
       if (e?.eventName === "core.loadretry") transport(opts.id, "retry");
     })
   ];
-  t.detach = () => {
+  // Idempotent and bound to this player: a stale detach (late teardown of an
+  // older player) must not unhook the newer one that replaced it.
+  let done = false;
+  const detachThis = () => {
+    if (done) return;
+    done = true;
     offs.forEach((f) => f());
-    t.player = null;
-    t.hls = null;
+    if (t.player === player) {
+      t.player = null;
+      t.hls = null;
+    }
+    if (t.detach === detachThis) t.detach = null;
   };
+  t.detach = detachThis;
   ensureRunning();
-  return () => t.detach?.();
+  return detachThis;
 }
 
 /** Tile state when it has no working player (connecting, offline, error). */
@@ -165,18 +196,24 @@ export function setTileStatus(id: string, status: Tracked["status"], label?: str
   const t = tracked.get(id);
   if (!t) return;
   if (label) t.info = { ...t.info, label };
-  if (status === "error" && t.status !== "error") log("bad", "circle-x", `${t.info.label} 播放失败`);
+  if (status === "error" && t.status !== "error") log("bad", "circle-x", msg("log.tileFailed", { label: t.info.label }));
   t.status = status;
 }
 
-/** The tile left the split. */
+/** Update a tile's display name (e.g. once the anchor name is known). */
+export function renameTile(id: string, label: string) {
+  const t = tracked.get(id);
+  if (t && label) t.info = { ...t.info, label };
+}
+
+/** The tile left the split / the room was closed. Safe to call twice. */
 export function untrackTile(id: string) {
   const t = tracked.get(id);
   if (!t) return;
   t.detach?.();
   tracked.delete(id);
   model.unregister(id, performance.now());
-  log("observe", "layers", `${t.info.label} 已移除 · 重新观察`);
+  log("observe", "layers", msg("log.tileRemoved", { label: t.info.label }));
   if (tracked.size === 0) stop();
 }
 
@@ -184,7 +221,7 @@ function transport(id: string, kind: TransportEventKind, segmentRatio?: number) 
   model.addEvent(id, { t: performance.now(), kind, segmentRatio });
   if (kind === "reconnect" || kind === "timeout") {
     const t = tracked.get(id);
-    log("warn", kind === "reconnect" ? "rotate-cw" : "clock", `${t?.info.label ?? id} ${kind === "reconnect" ? "正在重连" : "请求超时"}`);
+    log("warn", kind === "reconnect" ? "rotate-cw" : "clock", msg(kind === "reconnect" ? "log.reconnecting" : "log.timeout", { label: t?.info.label ?? id }));
   }
 }
 
@@ -226,7 +263,7 @@ function bufferAhead(v: HTMLVideoElement): number | null {
 function sampleTile(id: string, t: Tracked, now: number) {
   const video: HTMLVideoElement | null = t.player?.media ?? t.player?.video ?? null;
   let lifecycle: Lifecycle;
-  if (document.hidden) lifecycle = "hidden";
+  if (!isRendering(now)) lifecycle = "hidden";
   else if (t.status === "offline") lifecycle = "offline";
   else if (t.status === "error") lifecycle = "error";
   // Before a first frame; the model treats it as a reconnect if the tile played in an earlier epoch.
@@ -302,9 +339,14 @@ function tick() {
   if (late > DISCONTINUITY_MS) {
     model.discontinuity(now);
     native = null;
-    log("unknown", "moon", "暂停后恢复 · 速率重新计算");
-  } else if (!document.hidden) {
+    log("unknown", "moon", msg("log.resumed"));
+  } else if (isRendering(now)) {
     model.heartbeatLate(now, late);
+  }
+  const rendering = isRendering(now);
+  if (rendering !== wasRendering) {
+    if (!rendering) log("unknown", "eye-off", msg("log.windowHidden"));
+    wasRendering = rendering;
   }
 
   for (const [id, t] of tracked) sampleTile(id, t, now);
@@ -379,6 +421,8 @@ function ensureRunning() {
   if (timer) return;
   startedAt = performance.now();
   lastBeat = startedAt;
+  lastFrame = startedAt;
+  rafId = requestAnimationFrame(frameLoop);
   events = [];
   lastState = null;
   timer = window.setInterval(tick, SAMPLE_MS);
@@ -387,6 +431,7 @@ function ensureRunning() {
 function stop() {
   window.clearInterval(timer);
   timer = 0;
+  cancelAnimationFrame(rafId);
   snapshot = null;
   native = null;
   listeners.forEach((l) => l());
@@ -402,4 +447,38 @@ function subscribe(fn: () => void) {
 /** Latest monitor snapshot; null while no tile is tracked. */
 export function usePlaybackMonitor(): MonitorSnapshot | null {
   return useSyncExternalStore(subscribe, () => snapshot, () => null);
+}
+
+// ---------------------------------------------------------------- open state
+
+let monitorOpen = false;
+const openListeners = new Set<() => void>();
+const emitOpen = () => openListeners.forEach((l) => l());
+
+export function openPlaybackMonitor() {
+  // Player (element) fullscreen would hide an app-level overlay.
+  if (typeof document !== "undefined" && document.fullscreenElement) void document.exitFullscreen?.().catch(() => {});
+  monitorOpen = true;
+  emitOpen();
+}
+
+export function closePlaybackMonitor() {
+  monitorOpen = false;
+  emitOpen();
+}
+
+export function togglePlaybackMonitor() {
+  if (monitorOpen) closePlaybackMonitor();
+  else openPlaybackMonitor();
+}
+
+export function usePlaybackMonitorOpen(): boolean {
+  return useSyncExternalStore(
+    (fn) => {
+      openListeners.add(fn);
+      return () => openListeners.delete(fn);
+    },
+    () => monitorOpen,
+    () => false
+  );
 }

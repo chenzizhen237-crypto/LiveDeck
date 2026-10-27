@@ -7,7 +7,7 @@ import { Check, GripVertical, LayoutDashboard, LayoutGrid, MessageSquareText, Mi
 
 import { PlatformMark } from "@/components/livedeck/primitives";
 import { PlaybackHealthChip } from "@/components/metrics/PlaybackHealthChip";
-import { PlaybackMonitor } from "@/components/metrics/PlaybackMonitor";
+import { openPlaybackMonitor } from "@/services/playbackMetrics/monitor";
 import { applyDanmuFontFamilyForOS } from "@/components/player/constants";
 import { usePlayerOverlay } from "@/state/playerOverlay/PlayerOverlayProvider";
 import { useSplit, type PickTarget } from "@/state/split/SplitProvider";
@@ -50,7 +50,7 @@ export function SplitView() {
   const dragAbort = useRef<null | (() => void)>(null);
   const [notice, setNotice] = useState<PanelNotice | null>(null);
   const [saveAs, setSaveAs] = useState<string | null>(null);
-  const [health, setHealth] = useState<null | "popover" | "monitor">(null);
+  const [health, setHealth] = useState<null | "popover">(null);
   const noticeTimer = useRef(0);
 
   const notify = useCallback((n: PanelNotice) => {
@@ -361,7 +361,7 @@ export function SplitView() {
               setPanel(null);
               setHealth((h) => (h === "popover" ? null : "popover"));
             }}
-            onOpenMonitor={() => setHealth("monitor")}
+            onOpenMonitor={openPlaybackMonitor}
             positionClass={dock.panelClass}
           />
           <ToolButton active={panel === "layout"} onClick={() => setPanel(panel === "layout" ? null : "layout")} icon={<LayoutGrid size={15} />}>
@@ -414,7 +414,6 @@ export function SplitView() {
           </AnimatePresence>
         </div>
       </div>
-      <AnimatePresence>{health === "monitor" ? <PlaybackMonitor key="monitor" layoutName={split.layoutName} onClose={() => setHealth(null)} /> : null}</AnimatePresence>
     </div>
   );
 }

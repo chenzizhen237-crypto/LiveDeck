@@ -11,6 +11,7 @@ import { FollowTrigger } from "@/components/livedeck/FollowPopover";
 import { CategoryPopover } from "@/components/livedeck/CategoryPopover";
 import { SearchModal } from "@/components/livedeck/SearchModal";
 import { PerfHud } from "@/components/livedeck/PerfHud";
+import { PlaybackMonitorHost } from "@/components/metrics/PlaybackMonitorHost";
 import { SplitPickBanner, SplitView } from "@/components/split/SplitView";
 import { SplitProvider, useSplit } from "@/state/split/SplitProvider";
 import { PlayerOverlayHost, PlayerOverlayProvider, usePlayerOverlay } from "@/state/playerOverlay/PlayerOverlayProvider";
@@ -109,6 +110,7 @@ function Shell({ children }: { children: React.ReactNode }) {
       {!overlay.isOpen && !splitShown ? <FollowTrigger /> : null}
 
       <PerfHud />
+      <PlaybackMonitorHost />
 
       <AnimatePresence>
         {panel === "categories" ? <CategoryPopover key="cat" platform={platform} onClose={() => setPanel(null)} onPick={pickCategory} /> : null}

@@ -32,6 +32,7 @@ import { getHuyaStreamConfig } from "@/platforms/huya/playerHelper";
 import { getBilibiliStreamConfig } from "@/platforms/bilibili/playerHelper";
 import { useImageProxy } from "@/hooks/useImageProxy";
 import { danmakuColor as douyuColor, holdRoomDanmaku, holdRoomProxy, subscribeDanmaku } from "@/services/roomSession";
+import { renameTile, setTileStatus, trackTilePlayer, untrackTile } from "@/services/playbackMetrics/monitor";
 import { useFollow, type FollowedStreamer, type Platform as FollowPlatform } from "@/state/follow/FollowProvider";
 import { usePlayerUi } from "@/state/playerUi/PlayerUiProvider";
 import { useSplit } from "@/state/split/SplitProvider";
@@ -582,7 +583,32 @@ export function MainPlayer({
     return follow.isFollowed(fp, roomId);
   }, [follow, platform, roomId]);
 
+  // Playback monitor: this room is one tile. A reload or soft switch starts a new
+  // counter epoch on the same id; leaving the room removes it.
+  const metricsIdRef = useRef("");
+  metricsIdRef.current = `main:${platform}:${roomId}`;
+  const metricsLabelRef = useRef("");
+  metricsLabelRef.current = playerAnchorName || roomId;
+  const metricsDetachRef = useRef<null | (() => void)>(null);
+  const trackMain = useRef((player: any, url: string) => {
+    metricsDetachRef.current?.();
+    const isHls = playbackKindRef.current === "hls" || url.toLowerCase().includes(".m3u8");
+    metricsDetachRef.current = trackTilePlayer(
+      { id: metricsIdRef.current, label: metricsLabelRef.current, platform: toUiPlatform(platform), streamUrl: url, isHls },
+      player
+    );
+  });
+  useEffect(() => {
+    const id = metricsIdRef.current;
+    return () => untrackTile(id);
+  }, [platform, roomId]);
+  useEffect(() => {
+    if (playerAnchorName) renameTile(metricsIdRef.current, playerAnchorName);
+  }, [playerAnchorName]);
+
   const destroyPlayer = useCallback(() => {
+    metricsDetachRef.current?.();
+    metricsDetachRef.current = null;
     try {
       unlistenRef.current?.();
     } catch {
@@ -870,6 +896,7 @@ export function MainPlayer({
         return;
       }
       playbackKindRef.current = isHlsPlayback ? "hls" : "flv";
+      trackMain.current(player, url);
 
       try {
         const storedPlayerVolume = loadStoredVolume();
@@ -1066,6 +1093,7 @@ export function MainPlayer({
               if (ret && typeof (ret as any).then === "function") await ret;
               if (isSessionActive(sessionId)) {
                 playbackKindRef.current = nextKind;
+                trackMain.current(player, streamUrl);
                 await startDanmaku(sessionId, danmuOverlayRef.current, platform, roomId);
               }
             } catch {
@@ -1102,6 +1130,7 @@ export function MainPlayer({
               if (ret && typeof (ret as any).then === "function") await ret;
               if (isSessionActive(sessionId)) {
                 playbackKindRef.current = nextKind;
+                trackMain.current(player, resp.streamUrl);
                 await startDanmaku(sessionId, danmuOverlayRef.current, platform, danmakuBackendRoomId, danmakuFilterRoomId);
               }
             } catch {
@@ -1139,6 +1168,7 @@ export function MainPlayer({
               if (ret && typeof (ret as any).then === "function") await ret;
               if (isSessionActive(sessionId)) {
                 playbackKindRef.current = nextKind;
+                trackMain.current(player, streamUrl);
                 await startDanmaku(sessionId, danmuOverlayRef.current, platform, roomId);
               }
             } catch {
@@ -1178,6 +1208,7 @@ export function MainPlayer({
               if (ret && typeof (ret as any).then === "function") await ret;
               if (isSessionActive(sessionId)) {
                 playbackKindRef.current = nextKind;
+                trackMain.current(player, streamUrl);
                 await startDanmaku(sessionId, danmuOverlayRef.current, platform, roomId);
               }
             } catch {
@@ -1191,6 +1222,7 @@ export function MainPlayer({
         }
       } catch (e: any) {
         if (!isSessionActive(sessionId)) return;
+        setTileStatus(metricsIdRef.current, "error");
         // When the target room fails to load (e.g. offline), keep UI consistent by clearing any previous playback surface.
         destroyPlayer();
         const msg = e?.message ? String(e.message) : String(e);

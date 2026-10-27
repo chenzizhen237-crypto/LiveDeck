@@ -3,7 +3,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { MetricsModel } from "../src/services/playbackMetrics/model.ts";
+import { MetricsModel, msg } from "../src/services/playbackMetrics/model.ts";
 
 const tile = (id, extra = {}) => ({ id, label: id, platform: "douyu", transport: "flv", relayed: true, relayKey: `douyu-${id}`, ...extra });
 
@@ -50,7 +50,7 @@ test("observing until 20 valid seconds after settling, then healthy with 'try on
   const r = m.assess(40_000);
   assert.equal(r.state, "healthy");
   assert.equal(r.advice, "try");
-  assert.match(r.detail, /未得到验证/);
+  assert.equal(r.detail.key, "sys.healthy.detail");
 });
 
 test("unsupported frame counters are unknown, not zero, and don't block 'no buffering'", () => {
@@ -93,7 +93,7 @@ test("several streams draining with transport incidents → delivery trouble, av
   assert.equal(r.state, "delivery");
   assert.equal(r.advice, "avoid");
   assert.equal(r.affected.length, 2);
-  assert.ok(r.evidence.some((e) => /传输异常/.test(e)));
+  assert.ok(r.evidence.some((e) => e.key === "ev.transportOn"));
 });
 
 test("frame drops with full buffers: local pressure only when the device corroborates it", () => {
@@ -173,7 +173,7 @@ test("a recent addition that stayed healthy for 60 s upgrades advice to 'likely'
   assert.equal(r.state, "healthy");
   assert.equal(r.advice, "likely");
   // a non-addition change (e.g. quality policy) expires that evidence
-  m.workloadChanged(200_000, "画质策略已变化", false);
+  m.workloadChanged(200_000, msg("change.qualityPolicy"), false);
   feed(m, "a", 201, 230);
   feed(m, "b", 201, 230);
   assert.notEqual(m.assess(230_000).advice, "likely");
@@ -211,6 +211,6 @@ test("a reload after playing counts as a reconnect incident, not a fresh startup
   const r = m.assess(60_000);
   const b = r.tiles.find((t) => t.id === "b");
   assert.equal(b.health, "warning");
-  assert.equal(b.detail, "重连中");
+  assert.equal(b.detail[0].key, "tile.reconnecting");
   assert.equal(r.state, "isolated");
 });

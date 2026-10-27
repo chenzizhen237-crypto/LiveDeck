@@ -10,6 +10,13 @@
 //   - no capacity number is produced anywhere.
 // Thresholds are the doc's provisional starting points.
 
+/** A translatable message; the UI resolves `key` in the active locale (see src/i18n). */
+export interface Msg {
+  key: string;
+  vars?: Record<string, string | number | Msg | Msg[]>;
+}
+export const msg = (key: string, vars?: Msg["vars"]): Msg => ({ key, vars });
+
 export type Lifecycle =
   | "connecting"
   | "playing"
@@ -108,8 +115,8 @@ export interface TileAssessment {
   health: TileHealth;
   reasons: TileReason[];
   metrics: TileMetrics;
-  /** human-readable one-liner for the popover/table */
-  detail: string;
+  /** fragments for the popover/table one-liner, joined by the locale's list separator */
+  detail: Msg[];
   excludedReason: string | null;
 }
 
@@ -127,9 +134,9 @@ export interface DeviceSignals {
 export interface SystemAssessment {
   state: SystemState;
   advice: Advice;
-  headline: string;
-  detail: string;
-  evidence: string[];
+  headline: Msg;
+  detail: Msg;
+  evidence: Msg[];
   affected: string[];
   tiles: TileAssessment[];
   /** worst values across eligible tiles, never averaged */
@@ -157,7 +164,7 @@ interface TileRecord {
 export interface WorkloadChange {
   t: number;
   version: number;
-  description: string;
+  description: Msg;
   /** tile count went up (a natural "addition" observation) */
   addition: boolean;
 }
@@ -285,17 +292,13 @@ function presentationConcern(rec: TileRecord, now: number): boolean {
   return a !== null && b !== null && a >= DROP_RATIO_CONCERN && b >= DROP_RATIO_CONCERN;
 }
 
-function fmtS(v: number) {
-  return `${v.toFixed(1)} 秒`;
-}
-
 export function assessTile(rec: TileRecord, now: number): TileAssessment {
   const latest = rec.samples[rec.samples.length - 1] ?? null;
   const m = computeTileMetrics(rec, now);
   const base = { id: rec.info.id, lifecycle: latest?.lifecycle ?? null, metrics: m };
 
   if (!latest || now - latest.t > STALE_MS) {
-    return { ...base, health: "unknown", reasons: [], detail: "无近期数据", excludedReason: null };
+    return { ...base, health: "unknown", reasons: [], detail: [msg("tile.noData")], excludedReason: null };
   }
   const reasons: TileReason[] = [];
   if (m.longestStallS !== null && (m.longestStallS >= 1 || m.stallMsTotal >= 2000)) reasons.push("interruption");
@@ -317,37 +320,37 @@ export function assessTile(rec: TileRecord, now: number): TileAssessment {
     const wasPlaying = rec.firstFrameAt !== null;
     if ((wasPlaying || rec.everPlayed) && latest.lifecycle === "error") {
       rec.lastWarnAt = now;
-      return { ...base, health: "warning", reasons: ["interruption"], detail: "播放后中断", excludedReason: null };
+      return { ...base, health: "warning", reasons: ["interruption"], detail: [msg("tile.failedAfterPlaying")], excludedReason: null };
     }
-    return { ...base, health: "excluded", reasons: [], detail: latest.lifecycle === "offline" ? "未开播" : "启动失败", excludedReason: latest.lifecycle === "offline" ? "offline" : "startup failure" };
+    return { ...base, health: "excluded", reasons: [], detail: [msg(latest.lifecycle === "offline" ? "tile.offline" : "tile.startFailed")], excludedReason: latest.lifecycle === "offline" ? "offline" : "startup failure" };
   }
   if (latest.lifecycle === "hidden" || latest.lifecycle === "paused") {
-    return { ...base, health: "excluded", reasons: [], detail: latest.lifecycle === "hidden" ? "已隐藏，不计入" : "已暂停", excludedReason: latest.lifecycle };
+    return { ...base, health: "excluded", reasons: [], detail: [msg(latest.lifecycle === "hidden" ? "tile.hidden" : "tile.paused")], excludedReason: latest.lifecycle };
   }
   // Reloading after it had played: an interruption that stays visible.
   if (rec.everPlayed && (rec.firstFrameAt === null || latest.lifecycle === "reconnecting")) {
     rec.lastWarnAt = now;
-    return { ...base, health: "warning", reasons: ["interruption"], detail: "重连中", excludedReason: null };
+    return { ...base, health: "warning", reasons: ["interruption"], detail: [msg("tile.reconnecting")], excludedReason: null };
   }
   if (latest.lifecycle === "connecting" || rec.firstFrameAt === null) {
-    return { ...base, health: "excluded", reasons: [], detail: "连接中，不计入", excludedReason: "startup" };
+    return { ...base, health: "excluded", reasons: [], detail: [msg("tile.connecting")], excludedReason: "startup" };
   }
 
-  const parts: string[] = [];
-  if (m.bufferAhead !== null) parts.push(`缓冲 ${fmtS(m.bufferAhead)}${m.bufferSlope !== null && m.bufferSlope < -0.05 ? "，持续下降" : ""}`);
-  if (m.longestStallS) parts.push(`卡顿 ${fmtS(m.longestStallS)}`);
-  if (transportIncidents) parts.push(`${transportIncidents} 次传输异常`);
-  if (m.segmentRatio !== null && m.segmentRatio > 1) parts.push(`分片下载耗时 ${m.segmentRatio.toFixed(1)}× 实时`);
-  if (reasons.includes("presentation") && m.dropRatio !== null) parts.push(`掉帧 ${(m.dropRatio * 100).toFixed(1)} %`);
+  const parts: Msg[] = [];
+  if (m.bufferAhead !== null) parts.push(msg(m.bufferSlope !== null && m.bufferSlope < -0.05 ? "tile.bufferDraining" : "tile.buffer", { s: m.bufferAhead.toFixed(1) }));
+  if (m.longestStallS) parts.push(msg("tile.stall", { s: m.longestStallS.toFixed(1) }));
+  if (transportIncidents) parts.push(msg("tile.transport", { n: transportIncidents }));
+  if (m.segmentRatio !== null && m.segmentRatio > 1) parts.push(msg("tile.segment", { r: m.segmentRatio.toFixed(1) }));
+  if (reasons.includes("presentation") && m.dropRatio !== null) parts.push(msg("tile.drops", { p: (m.dropRatio * 100).toFixed(1) }));
 
   if (symptomatic || inRecovery) {
     const kept = symptomatic ? reasons : (["interruption"] as TileReason[]);
-    return { ...base, health: "warning", reasons: symptomatic ? reasons : kept, detail: parts.join("，") || "恢复中", excludedReason: null };
+    return { ...base, health: "warning", reasons: symptomatic ? reasons : kept, detail: parts.length ? parts : [msg("tile.recovering")], excludedReason: null };
   }
   if (m.validMs < MIN_VALID_MS) {
-    return { ...base, health: "observing", reasons: [], detail: "稳定中", excludedReason: null };
+    return { ...base, health: "observing", reasons: [], detail: [msg("tile.settling")], excludedReason: null };
   }
-  return { ...base, health: "healthy", reasons: [], detail: parts.join("，") || "流畅", excludedReason: null };
+  return { ...base, health: "healthy", reasons: [], detail: parts.length ? parts : [msg("tile.smooth")], excludedReason: null };
 }
 
 /** System classification -------------------------------------------------- */
@@ -385,58 +388,58 @@ export function classify(
     longestStall: worstBy((m) => m.longestStallS),
     dropRatio: worstBy((m) => m.dropRatio)
   };
-  const deviceEvidence = [
-    device.uiDelayP95 !== null ? `界面延迟 p95 ${Math.round(device.uiDelayP95)} ms` : "界面延迟不可用",
-    device.cpuPercent !== null ? `应用 CPU ${Math.round(device.cpuPercent)} %` : "CPU 不可用"
-  ].join("，");
+  const deviceEvidence: Msg[] = [
+    device.uiDelayP95 !== null ? msg("ev.uiDelay", { ms: Math.round(device.uiDelayP95) }) : msg("ev.uiDelayNA"),
+    device.cpuPercent !== null ? msg("ev.cpu", { pct: Math.round(device.cpuPercent) }) : msg("ev.cpuNA")
+  ];
 
   const recentChange = ctx.lastChange !== null && ctx.now - ctx.lastChange.t < MIN_VALID_MS;
   const n = counted.length;
   const base = { tiles, worst, affected: warn.map((t) => t.id) };
 
   let state: SystemState;
-  let headline: string;
-  let detail: string;
-  const evidence: string[] = [];
+  let headline: Msg;
+  let detail: Msg;
+  const evidence: Msg[] = [];
 
   if (warn.length === 0) {
     if (n === 0 || observing.length > 0 || healthy.length === 0 || recentChange) {
       state = "observing";
-      headline = ctx.lastChange && recentChange ? "变更后重新观察…" : "正在观察播放…";
-      detail = ctx.lastChange && recentChange ? ctx.lastChange.description : "需要至少 20 秒可比较的播放数据。";
+      headline = msg(ctx.lastChange && recentChange ? "sys.observingChange" : "sys.observing");
+      detail = ctx.lastChange && recentChange ? ctx.lastChange.description : msg("sys.observing.detail");
     } else {
       state = "healthy";
-      headline = `${healthy.length} 路画面播放流畅`;
-      detail = "近期没有卡顿。剩余带宽和解码余量并未得到验证。";
-      evidence.push(`最近 30 秒内 ${healthy.length} 路画面没有中断`, `无本机压力：${deviceEvidence}`);
+      headline = msg("sys.healthy", { n: healthy.length });
+      detail = msg("sys.healthy.detail");
+      evidence.push(msg("ev.noInterruptions", { n: healthy.length }), msg("ev.noLocal", { device: deviceEvidence }));
     }
   } else if (delivery.length >= 2 && presentation.length >= 2 && localCorroborated) {
     state = "unclear";
-    headline = "播放不稳定，原因不明";
-    detail = "同时出现传输问题和本机压力。";
-    evidence.push(`${delivery.length} 路画面缓冲下降或卡顿`, `${presentation.length} 路画面在有缓冲时掉帧`, deviceEvidence);
+    headline = msg("sys.unclear");
+    detail = msg("sys.unclear.mixed");
+    evidence.push(msg("ev.deliveryTiles", { n: delivery.length }), msg("ev.presentationTiles", { n: presentation.length }), msg("ev.device", { device: deviceEvidence }));
   } else if (delivery.length >= 2) {
     state = "delivery";
-    headline = "数据传输跟不上";
-    detail = `${delivery.length} 路画面缓冲在下降${deliveryWithTransport.length ? "，且传输反复延迟" : ""}。`;
-    evidence.push(`${delivery.length} 路独立画面在同一 30 秒内缓冲耗尽或卡顿`);
-    if (deliveryWithTransport.length) evidence.push(`其中 ${deliveryWithTransport.length} 路出现传输异常`);
-    evidence.push(localCorroborated ? `同时存在本机压力：${deviceEvidence}` : `无本机压力：${deviceEvidence}`);
+    headline = msg("sys.delivery");
+    detail = msg(deliveryWithTransport.length ? "sys.delivery.detailTransport" : "sys.delivery.detail", { n: delivery.length });
+    evidence.push(msg("ev.deliveryOverlap", { n: delivery.length }));
+    if (deliveryWithTransport.length) evidence.push(msg("ev.transportOn", { n: deliveryWithTransport.length }));
+    evidence.push(msg(localCorroborated ? "ev.alsoLocal" : "ev.noLocal", { device: deviceEvidence }));
   } else if (presentation.length >= 2 && localCorroborated) {
     state = "local";
-    headline = "这台设备有点跟不上";
-    detail = "多路画面在缓冲充足的情况下掉帧。";
-    evidence.push(`${presentation.length} 路画面掉帧 ≥ 1 %，缓冲 ≥ 2 秒`, deviceEvidence);
+    headline = msg("sys.local");
+    detail = msg("sys.local.detail");
+    evidence.push(msg("ev.localDrops", { n: presentation.length }), msg("ev.device", { device: deviceEvidence }));
   } else if (warn.length === 1 && healthy.length >= 1) {
     state = "isolated";
-    headline = "有一路画面不稳定";
-    detail = `${labelOf(warn[0].id)}：${warn[0].detail}。其他画面正常。`;
-    evidence.push(`其余 ${healthy.length} 路画面在同一时段正常`);
+    headline = msg("sys.isolated");
+    detail = msg("sys.isolated.detail", { label: labelOf(warn[0].id), detail: warn[0].detail });
+    evidence.push(msg("ev.peersHealthy", { n: healthy.length }));
   } else {
     state = "unclear";
-    headline = "播放不稳定，原因不明";
-    detail = presentation.length ? "画面在有缓冲时掉帧，但没有本机压力佐证。" : "症状无法指向单一原因。";
-    evidence.push(`${warn.length} 路画面受影响`, deviceEvidence);
+    headline = msg("sys.unclear");
+    detail = msg(presentation.length ? "sys.unclear.presentation" : "sys.unclear.generic");
+    evidence.push(msg("ev.affected", { n: warn.length }), msg("ev.device", { device: deviceEvidence }));
   }
 
   let advice: Advice;
@@ -464,14 +467,14 @@ export class MetricsModel {
       return;
     }
     this.tiles.set(info.id, { info, epoch: 0, epochStart: now, firstFrameAt: null, everPlayed: false, samples: [], events: [], profile: { width: null, height: null, fps: null, codec: null }, lastWarnAt: null });
-    this.workloadChanged(now, `已加入：${info.label}`, true);
+    this.workloadChanged(now, msg("change.tileAdded", { label: info.label }), true);
   }
 
   unregister(id: string, now: number) {
     const rec = this.tiles.get(id);
     if (!rec) return;
     this.tiles.delete(id);
-    this.workloadChanged(now, `已移除：${rec.info.label}`, false);
+    this.workloadChanged(now, msg("change.tileRemoved", { label: rec.info.label }), false);
   }
 
   /** Reload or player replacement: counters restart, history of incidents stays. */
@@ -533,7 +536,7 @@ export class MetricsModel {
     this.device = { cpuPercent, cpuCores };
   }
 
-  workloadChanged(now: number, description: string, addition: boolean) {
+  workloadChanged(now: number, description: Msg, addition: boolean) {
     this.version += 1;
     const change = { t: now, version: this.version, description, addition };
     this.changes.push(change);

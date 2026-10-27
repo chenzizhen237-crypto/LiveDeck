@@ -5,6 +5,7 @@
 import React from "react";
 import { CircleCheck, CircleHelp, CloudAlert, Cpu, Hourglass, LoaderCircle, MonitorX, Plus, TriangleAlert } from "lucide-react";
 
+import { useT, type MsgKey } from "@/i18n";
 import type { Advice, SystemState, TileHealth } from "@/services/playbackMetrics/model";
 
 export type Tone = "good" | "warn" | "bad" | "observe" | "unknown";
@@ -18,28 +19,31 @@ export const TONE: Record<Tone, { text: string; soft: string; ring: string; dot:
   unknown: { text: "text-fg-3", soft: "bg-chip", ring: "border-line-strong", dot: "bg-fg-3", stroke: "var(--color-fg-3)" }
 };
 
-export const STATE_META: Record<SystemState, { tone: Tone; icon: React.ComponentType<{ size?: number; className?: string }>; short: (n: number) => string }> = {
-  observing: { tone: "observe", icon: LoaderCircle, short: () => "正在观察…" },
-  healthy: { tone: "good", icon: CircleCheck, short: (n) => `${n} 路流畅` },
-  delivery: { tone: "warn", icon: CloudAlert, short: () => "传输跟不上" },
-  local: { tone: "warn", icon: Cpu, short: () => "设备吃力" },
-  isolated: { tone: "warn", icon: MonitorX, short: () => "一路不稳定" },
-  unclear: { tone: "bad", icon: CircleHelp, short: () => "不稳定 · 原因不明" }
+export const STATE_META: Record<SystemState, { tone: Tone; icon: React.ComponentType<{ size?: number; className?: string }>; short: MsgKey }> = {
+  observing: { tone: "observe", icon: LoaderCircle, short: "chip.observing" },
+  healthy: { tone: "good", icon: CircleCheck, short: "chip.healthy" },
+  delivery: { tone: "warn", icon: CloudAlert, short: "chip.delivery" },
+  local: { tone: "warn", icon: Cpu, short: "chip.local" },
+  isolated: { tone: "warn", icon: MonitorX, short: "chip.isolated" },
+  unclear: { tone: "bad", icon: CircleHelp, short: "chip.unclear" }
 };
 
-export const ADVICE_META: Record<Advice, { tone: Tone; icon: React.ComponentType<{ size?: number; className?: string }>; label: string; short: string; explain: string }> = {
-  try: { tone: "observe", icon: Plus, label: "可以试着再加一路", short: "可再加一路", explain: "当前播放正常，但剩余带宽和解码余量并未得到验证。" },
-  likely: { tone: "good", icon: CircleCheck, label: "再加一路大概率可行", short: "可再加一路", explain: "播放正常，最近一次类似的添加也保持稳定。这仍是估计。" },
-  wait: { tone: "unknown", icon: Hourglass, label: "先等等", short: "先等等", explain: "刚启动、刚有变化，或数据还不够。" },
-  avoid: { tone: "warn", icon: TriangleAlert, label: "暂不建议添加", short: "暂不添加", explain: "现在添加大概率会更糟。不会自动做任何改动。" }
+export const ADVICE_META: Record<Advice, { tone: Tone; icon: React.ComponentType<{ size?: number; className?: string }> }> = {
+  try: { tone: "observe", icon: Plus },
+  likely: { tone: "good", icon: CircleCheck },
+  wait: { tone: "unknown", icon: Hourglass },
+  avoid: { tone: "warn", icon: TriangleAlert }
 };
 
-export const TILE_HEALTH: Record<TileHealth, { tone: Tone; label: string }> = {
-  healthy: { tone: "good", label: "播放中" },
-  warning: { tone: "bad", label: "异常" },
-  observing: { tone: "observe", label: "稳定中" },
-  excluded: { tone: "unknown", label: "不计入" },
-  unknown: { tone: "unknown", label: "无数据" }
+/** advice.<a>, advice.<a>.short, advice.<a>.explain */
+export const adviceKey = (a: Advice, part?: "short" | "explain") => (part ? `advice.${a}.${part}` : `advice.${a}`) as MsgKey;
+
+export const TILE_HEALTH: Record<TileHealth, { tone: Tone; label: MsgKey }> = {
+  healthy: { tone: "good", label: "health.healthy" },
+  warning: { tone: "bad", label: "health.warning" },
+  observing: { tone: "observe", label: "health.observing" },
+  excluded: { tone: "unknown", label: "health.excluded" },
+  unknown: { tone: "unknown", label: "health.unknown" }
 };
 
 export function Pill({ tone, children }: { tone: Tone; children: React.ReactNode }) {
@@ -47,20 +51,22 @@ export function Pill({ tone, children }: { tone: Tone; children: React.ReactNode
 }
 
 export function AdviceTag({ advice }: { advice: Advice }) {
+  const { t } = useT();
   const a = ADVICE_META[advice];
   const Icon = a.icon;
   return (
     <span className={`inline-flex shrink-0 items-center gap-1 rounded-md px-2 py-[3px] text-[11px] font-semibold ${TONE[a.tone].soft} ${a.tone === "unknown" ? "text-fg-2" : TONE[a.tone].text}`}>
       <Icon size={12} className={TONE[a.tone].text} />
-      {a.label}
+      {t(adviceKey(advice))}
     </span>
   );
 }
 
 /** Polyline sparkline in a 100×30 box; null points break the line. */
 export function Sparkline({ values, tone, height = 28, min, max }: { values: (number | null)[]; tone: Tone; height?: number; min?: number; max?: number }) {
+  const { t } = useT();
   const nums = values.filter((v): v is number => v !== null);
-  if (nums.length < 2) return <div style={{ height }} className="flex items-center text-[10px] text-fg-3">数据不足</div>;
+  if (nums.length < 2) return <div style={{ height }} className="flex items-center text-[10px] text-fg-3">{t("spark.insufficient")}</div>;
   const lo = min ?? Math.min(...nums);
   const hi = Math.max(max ?? Math.max(...nums), lo + 1e-6);
   const step = 100 / Math.max(1, values.length - 1);
