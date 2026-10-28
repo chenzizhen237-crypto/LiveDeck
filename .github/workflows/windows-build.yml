@@ -5,8 +5,8 @@ permissions:
   packages: write
   actions: read
 
-# Inherited from upstream. macOS releases run on Jimmy (release.yml); Windows can't, so this
-# stays manual on GitHub-hosted runners instead of firing on every tag.
+# Inherited from upstream. macOS releases come from release.yml; this Windows build stays manual
+# instead of firing on every tag.
 on:
   workflow_dispatch:
     inputs:

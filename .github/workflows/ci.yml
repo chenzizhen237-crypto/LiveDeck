@@ -1,7 +1,7 @@
 name: CI
 
-# Runs on Jimmy (self-hosted Mac mini, label "livedeck"): frontend typecheck + build,
-# frontend unit tests, and the backend's Rust tests. Same checks as `jimmy-test ci`.
+# GitHub-hosted macOS runner (free on this public repo): frontend typecheck + build,
+# frontend unit tests, and the backend's Rust tests.
 on:
   push:
     branches: [main, livedeck-next]
@@ -17,14 +17,33 @@ permissions:
 
 jobs:
   test:
-    # This is a public repo: never run pull requests from forks on the self-hosted Mac.
-    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
-    runs-on: [self-hosted, macOS, ARM64, livedeck]
+    runs-on: macos-latest
     timeout-minutes: 45
+    env:
+      # Release builds on Apple's linker choke on Rust LTO bitcode (same as upstream's workflow).
+      CARGO_PROFILE_RELEASE_LTO: "false"
+      # pnpm 12 ignores the old "pnpm.onlyBuiltDependencies" field; don't fail installs on it.
+      npm_config_strict_dep_builds: "false"
     steps:
       - uses: actions/checkout@v4
 
-      - uses: ./.github/actions/jimmy-toolchain
+      - uses: pnpm/action-setup@v6
+        with:
+          version: latest
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: './src-tauri -> target'
+
+      - name: Install protoc
+        run: brew install protobuf
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
