@@ -1,7 +1,7 @@
 name: Release
 
 # Push a tag like v0.2.0 (matching src-tauri/tauri.conf.json "version") to build LiveDeck on
-# Jimmy (Apple Silicon) and publish a GitHub release with the .dmg and the zipped .app.
+# a GitHub-hosted macOS runner (Apple Silicon) and publish a GitHub release with the .dmg and the zipped .app.
 # The app isn't signed or notarized yet; the release notes say how to open it.
 on:
   push:
@@ -21,17 +21,35 @@ permissions:
 
 jobs:
   macos:
-    runs-on: [self-hosted, macOS, ARM64, livedeck]
+    runs-on: macos-latest
     timeout-minutes: 90
     env:
       TAG: ${{ github.event.inputs.tag || github.ref_name }}
+      CARGO_PROFILE_RELEASE_LTO: "false"
+      npm_config_strict_dep_builds: "false"
     steps:
       - uses: actions/checkout@v4
         with:
           ref: ${{ env.TAG }}
           fetch-depth: 0
 
-      - uses: ./.github/actions/jimmy-toolchain
+      - uses: pnpm/action-setup@v6
+        with:
+          version: latest
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: './src-tauri -> target'
+
+      - name: Install protoc
+        run: brew install protobuf
 
       - name: Check tag matches the app version
         run: |
@@ -71,7 +89,7 @@ jobs:
           {
             echo "## LiveDeck $VERSION"
             echo
-            echo "macOS (Apple Silicon). Built on the self-hosted runner from \`$TAG\`."
+            echo "macOS (Apple Silicon). Built on GitHub Actions from \`$TAG\`."
             echo
             echo "> Not signed or notarized yet. After moving LiveDeck to Applications, right-click → Open the first time,"
             echo "> or run \`xattr -dr com.apple.quarantine /Applications/LiveDeck.app\`."
