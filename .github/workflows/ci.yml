@@ -5,7 +5,9 @@ name: CI
 on:
   push:
     branches: [main, livedeck-next]
+  # Draft PRs skip CI; marking one ready for review runs it.
   pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
   workflow_dispatch:
 
 concurrency:
@@ -17,6 +19,7 @@ permissions:
 
 jobs:
   test:
+    if: github.event.pull_request.draft != true
     runs-on: macos-latest
     timeout-minutes: 45
     env:
